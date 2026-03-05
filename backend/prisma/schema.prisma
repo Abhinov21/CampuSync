@@ -1,0 +1,158 @@
+// This tells Prisma which database you're using
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums (predefined allowed values)
+enum Role {
+  STUDENT
+  PROFESSOR
+  ADMIN
+}
+
+enum SessionStatus {
+  SCHEDULED
+  ACTIVE
+  ENDED
+}
+
+// Base User model (authentication)
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // Will be hashed
+  role      Role
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  student   Student?
+  professor Professor?
+
+  @@map("users") // Table name in database
+}
+
+// Student profile (extends User)
+model Student {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  rollNumber   String   @unique
+  name         String
+  department   String
+  year         Int
+  rfidTag      String   @unique
+  createdAt    DateTime @default(now())
+
+  // Relationships
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollments  Enrollment[]
+  attendances  Attendance[]
+
+  @@map("students")
+}
+
+// Professor profile (extends User)
+model Professor {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  employeeId  String   @unique
+  name        String
+  department  String
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courses Course[]
+
+  @@map("professors")
+}
+
+// Course model
+model Course {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  credits     Int
+  semester    String
+  professorId String
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  professor   Professor    @relation(fields: [professorId], references: [id])
+  enrollments Enrollment[]
+  sessions    Session[]
+
+  @@map("courses")
+}
+
+// Many-to-Many relationship between Students and Courses
+model Enrollment {
+  id         String   @id @default(uuid())
+  studentId  String
+  courseId   String
+  enrolledAt DateTime @default(now())
+
+  // Relationships
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate enrollments
+  @@unique([studentId, courseId])
+  @@map("enrollments")
+}
+
+// Classroom with IoT device
+model Classroom {
+  id         String   @id @default(uuid())
+  roomNumber String   @unique
+  building   String
+  capacity   Int
+  deviceId   String   @unique // Raspberry Pi identifier
+  createdAt  DateTime @default(now())
+
+  // Relationships
+  sessions Session[]
+
+  @@map("classrooms")
+}
+
+// Attendance session (individual class period)
+model Session {
+  id          String        @id @default(uuid())
+  courseId    String
+  classroomId String
+  startTime   DateTime
+  endTime     DateTime?
+  status      SessionStatus @default(SCHEDULED)
+  createdAt   DateTime      @default(now())
+
+  // Relationships
+  course      Course       @relation(fields: [courseId], references: [id])
+  classroom   Classroom    @relation(fields: [classroomId], references: [id])
+  attendances Attendance[]
+
+  @@map("sessions")
+}
+
+// Individual attendance record
+model Attendance {
+  id         String   @id @default(uuid())
+  sessionId  String
+  studentId  String
+  timestamp  DateTime @default(now())
+  rfidTag    String
+
+  // Relationships
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate attendance in same session
+  @@unique([sessionId, studentId])
+  @@map("attendances")
+}
