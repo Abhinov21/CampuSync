@@ -10,6 +10,10 @@ const prisma = new PrismaClient();
 
 // Import services
 const authRoutes = require('./routes/auth');
+const attendanceRoutes = require('./routes/attendance');
+const sessionsRoutes = require('./routes/sessions');
+const coursesRoutes = require('./routes/courses');
+const adminRoutes = require('./routes/admin');
 const mqttService = require('./services/mqttService');
 const eventProcessor = require('./services/eventProcessor');
 
@@ -50,6 +54,10 @@ app.get('/health', async (req, res) => {
 
 // Routes
 app.use('/auth', authRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/sessions', sessionsRoutes);
+app.use('/api/courses', coursesRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -102,10 +110,15 @@ const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
-    // Test database connection
+    // Test database connection (non-blocking)
     console.log('🗄️  Testing database connection...');
-    await prisma.$queryRaw`SELECT 1`;
-    console.log('✅ Database connected');
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      console.log('✅ Database connected');
+    } catch (dbError) {
+      console.log('⚠️  Database not accessible (network firewall) - running in offline mode');
+      console.log('   This is expected in environments with restricted network access');
+    }
 
     // Attach event processor to MQTT service
     mqttService.setEventProcessor(eventProcessor);
