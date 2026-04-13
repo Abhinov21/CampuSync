@@ -11,6 +11,7 @@ const prisma = new PrismaClient();
 // Import services
 const authRoutes = require('./routes/auth');
 const mqttService = require('./services/mqttService');
+const eventProcessor = require('./services/eventProcessor');
 
 // Middleware
 app.use(cors());
@@ -75,6 +76,14 @@ app.use((err, req, res, next) => {
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
   
+  // Cleanup active sessions
+  console.log('🧹 Cleaning up active sessions...');
+  try {
+    await eventProcessor.cleanupAllSessions();
+  } catch (error) {
+    console.error('❌ Error during session cleanup:', error.message);
+  }
+  
   // Disconnect MQTT
   if (mqttService.isConnected) {
     console.log('🔌 Disconnecting from MQTT...');
@@ -98,6 +107,10 @@ async function startServer() {
     await prisma.$queryRaw`SELECT 1`;
     console.log('✅ Database connected');
 
+    // Attach event processor to MQTT service
+    mqttService.setEventProcessor(eventProcessor);
+    console.log('📌 Event processor attached to MQTT service');
+
     // Start HTTP server
     app.listen(PORT, () => {
       console.log(`\n✅ Server running on http://localhost:${PORT}`);
@@ -108,7 +121,9 @@ async function startServer() {
 
     // Connect to MQTT (non-blocking, continues even if fails initially)
     console.log('🔌 Initializing MQTT service...');
-    await mqttService.connect();
+    await mqttService.connect().catch((error) => {
+      console.error('⚠️  MQTT connection error (will retry):', error.message);
+    });
   } catch (error) {
     console.error('❌ Server startup error:', error);
     await prisma.$disconnect();
