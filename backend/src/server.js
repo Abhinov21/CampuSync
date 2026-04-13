@@ -8,12 +8,13 @@ dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
 
+// Import services
+const authRoutes = require('./routes/auth');
+const mqttService = require('./services/mqttService');
+
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Import routes
-const authRoutes = require('./routes/auth');
 
 // Root route
 app.get('/', (req, res) => {
@@ -28,9 +29,12 @@ app.get('/', (req, res) => {
 app.get('/health', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
+    const mqttStatus = mqttService.getStatus();
+    
     res.json({
       status: 'OK',
       database: 'Connected',
+      mqtt: mqttStatus,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -70,13 +74,46 @@ app.use((err, req, res, next) => {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
+  
+  // Disconnect MQTT
+  if (mqttService.isConnected) {
+    console.log('🔌 Disconnecting from MQTT...');
+    mqttService.disconnect();
+  }
+  
+  // Disconnect database
   await prisma.$disconnect();
+  
+  console.log('✅ Shutdown complete');
   process.exit(0);
 });
 
+// Initialize and start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔐 Auth routes: http://localhost:${PORT}/auth/login`);
-});
+
+async function startServer() {
+  try {
+    // Test database connection
+    console.log('🗄️  Testing database connection...');
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('✅ Database connected');
+
+    // Start HTTP server
+    app.listen(PORT, () => {
+      console.log(`\n✅ Server running on http://localhost:${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/health`);
+      console.log(`🔐 Auth routes: http://localhost:${PORT}/auth/login`);
+      console.log('');
+    });
+
+    // Connect to MQTT (non-blocking, continues even if fails initially)
+    console.log('🔌 Initializing MQTT service...');
+    await mqttService.connect();
+  } catch (error) {
+    console.error('❌ Server startup error:', error);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+}
+
+startServer();
