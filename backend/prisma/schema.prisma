@@ -8,7 +8,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Enums (predefined allowed values)
+// ============ ENUMS ============
 enum Role {
   STUDENT
   PROFESSOR
@@ -18,50 +18,75 @@ enum Role {
 enum SessionStatus {
   SCHEDULED
   ACTIVE
+  COMPLETED
+}
+
+enum AttendanceSessionStatus {
+  ACTIVE
   ENDED
 }
 
-// Base User model (authentication)
+enum EventType {
+  AUTH
+  PING
+  RECHECK_OK
+  SESSION_END
+}
+
+enum DeviceStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum AnomalySeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// ============ AUTH & USER MANAGEMENT ============
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
-  password  String   // Will be hashed
+  password  String   // hashed
   role      Role
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relationships
+  // Relationships (one-to-one with role-specific profile)
   student   Student?
   professor Professor?
+  admin     Admin?
 
-  @@map("users") // Table name in database
+  @@map("users")
 }
 
-// Student profile (extends User)
 model Student {
-  id           String   @id @default(uuid())
-  userId       String   @unique
-  rollNumber   String   @unique
-  name         String
-  department   String
-  year         Int
-  rfidTag      String   @unique
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  name        String
+  rollNumber  String   @unique
+  department  String
+  year        Int
+  createdAt   DateTime @default(now())
 
   // Relationships
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrollments  Enrollment[]
-  attendances  Attendance[]
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device               Device?
+  enrollments          Enrollment[]
+  attendanceSessions   AttendanceSession[]
+  attendanceRecords    AttendanceRecord[]
+  anomalies            AnomalyLog[]
 
   @@map("students")
 }
 
-// Professor profile (extends User)
 model Professor {
   id          String   @id @default(uuid())
   userId      String   @unique
-  employeeId  String   @unique
   name        String
+  employeeId  String   @unique
   department  String
   createdAt   DateTime @default(now())
 
@@ -72,7 +97,19 @@ model Professor {
   @@map("professors")
 }
 
-// Course model
+model Admin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("admins")
+}
+
+// ============ COURSES & ENROLLMENT ============
 model Course {
   id          String   @id @default(uuid())
   code        String   @unique
@@ -91,11 +128,10 @@ model Course {
   @@map("courses")
 }
 
-// Many-to-Many relationship between Students and Courses
 model Enrollment {
-  id         String   @id @default(uuid())
-  studentId  String
-  courseId   String
+  id        String   @id @default(uuid())
+  studentId String
+  courseId  String
   enrolledAt DateTime @default(now())
 
   // Relationships
@@ -107,52 +143,116 @@ model Enrollment {
   @@map("enrollments")
 }
 
-// Classroom with IoT device
-model Classroom {
-  id         String   @id @default(uuid())
-  roomNumber String   @unique
-  building   String
-  capacity   Int
-  deviceId   String   @unique // Raspberry Pi identifier
-  createdAt  DateTime @default(now())
+// ============ DEVICES (MQTT Wristbands) ============
+model Device {
+  id              String   @id @default(uuid())
+  deviceId        String   @unique // WB_001, WB_002, etc.
+  studentId       String   @unique // One-to-one binding
+  deviceStatus    DeviceStatus @default(ACTIVE)
+  batteryLevel    Int      @default(100) // 0-100%
+  lastPingAt      DateTime?
+  assignedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
 
   // Relationships
-  sessions Session[]
+  student             Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attendanceSessions  AttendanceSession[]
+  mqttEventLogs       MQTTEventLog[]
+  anomalies           AnomalyLog[]
 
-  @@map("classrooms")
+  @@map("devices")
 }
 
-// Attendance session (individual class period)
+// ============ SESSION MANAGEMENT ============
 model Session {
-  id          String        @id @default(uuid())
-  courseId    String
-  classroomId String
-  startTime   DateTime
-  endTime     DateTime?
-  status      SessionStatus @default(SCHEDULED)
-  createdAt   DateTime      @default(now())
+  id                  String   @id @default(uuid())
+  courseId            String
+  scheduledStartTime  DateTime
+  scheduledEndTime    DateTime?
+  actualStartTime     DateTime?
+  actualEndTime       DateTime?
+  sessionStatus       SessionStatus @default(SCHEDULED)
+  createdAt           DateTime @default(now())
 
   // Relationships
-  course      Course       @relation(fields: [courseId], references: [id])
-  classroom   Classroom    @relation(fields: [classroomId], references: [id])
-  attendances Attendance[]
+  course              Course              @relation(fields: [courseId], references: [id])
+  attendanceSessions  AttendanceSession[]
 
   @@map("sessions")
 }
 
-// Individual attendance record
-model Attendance {
-  id         String   @id @default(uuid())
-  sessionId  String
-  studentId  String
-  timestamp  DateTime @default(now())
-  rfidTag    String
+// ============ ATTENDANCE TRACKING ============
+model AttendanceSession {
+  id                  String   @id @default(uuid())
+  sessionId           String
+  studentId           String
+  deviceId            String
+  sessionStartTime    DateTime
+  lastPingTime        DateTime?
+  sessionEndTime      DateTime?
+  totalDurationSeconds Int     @default(0)
+  sessionStatus       AttendanceSessionStatus @default(ACTIVE)
+  reCheckFailureCount Int     @default(0)
+  createdAt           DateTime @default(now())
 
   // Relationships
-  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  session             Session             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student             Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  device              Device              @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  attendanceRecords   AttendanceRecord[]
 
-  // Prevent duplicate attendance in same session
-  @@unique([sessionId, studentId])
-  @@map("attendances")
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id                  String   @id @default(uuid())
+  attendanceSessionId String
+  studentId           String
+  eventType           EventType
+  eventTimestamp      DateTime
+  createdAt           DateTime @default(now())
+
+  // Relationships
+  attendanceSession   AttendanceSession @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  student             Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("attendance_records")
+}
+
+// ============ LOGGING & MONITORING ============
+model MQTTEventLog {
+  id              String   @id @default(uuid())
+  deviceId        String
+  eventType       EventType
+  payload         Json     // Raw MQTT message
+  processedAt     DateTime?
+  status          String   @default("pending") // pending | processed | failed
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  // Relationships
+  device          Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  // Index for time-based queries
+  @@index([createdAt])
+  @@index([deviceId])
+  @@map("mqtt_event_logs")
+}
+
+model AnomalyLog {
+  id              String   @id @default(uuid())
+  studentId       String?  // Nullable if device-only anomaly
+  deviceId        String?  // Nullable if student-only anomaly
+  anomalyType     String   // "device_mismatch", "duplicate_auth", "timeout", etc.
+  description     String
+  severity        AnomalySeverity
+  createdAt       DateTime @default(now())
+
+  // Relationships
+  student         Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  device          Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([severity])
+  @@map("anomaly_logs")
 }

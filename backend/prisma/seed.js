@@ -1,7 +1,7 @@
 /**
  * Database Seed Script - CampuSync
- * Populates test data for development
- * Run: npx prisma db seed
+ * Populates test data for development (MQTT-based attendance system)
+ * Run: npm run db:seed
  */
 
 const { PrismaClient } = require('@prisma/client');
@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting database seed...');
 
-  // Clear existing data
+  // Clear existing data (order matters due to foreign keys)
   console.log('🗑️  Clearing existing data...');
   await prisma.anomalyLog.deleteMany();
   await prisma.mQTTEventLog.deleteMany();
@@ -33,43 +33,38 @@ async function main() {
   const students = [
     {
       email: 'student1@campusync.com',
-      rollNumber: '2024001',
+      rollNumber: '21CS001',
       name: 'Arjun Sharma',
       department: 'CS',
       year: 2,
-      rfidTag: 'RFID_001',
     },
     {
       email: 'student2@campusync.com',
-      rollNumber: '2024002',
+      rollNumber: '21CS002',
       name: 'Priya Verma',
       department: 'CS',
       year: 2,
-      rfidTag: 'RFID_002',
     },
     {
       email: 'student3@campusync.com',
-      rollNumber: '2024003',
+      rollNumber: '21ECE001',
       name: 'Rohan Patel',
       department: 'ECE',
       year: 2,
-      rfidTag: 'RFID_003',
     },
     {
       email: 'student4@campusync.com',
-      rollNumber: '2024004',
+      rollNumber: '21ECE002',
       name: 'Ananya Singh',
       department: 'CS',
       year: 2,
-      rfidTag: 'RFID_004',
     },
     {
       email: 'student5@campusync.com',
-      rollNumber: '2024005',
+      rollNumber: '21EE001',
       name: 'Vikram Gupta',
       department: 'ECE',
       year: 2,
-      rfidTag: 'RFID_005',
     },
   ];
 
@@ -90,7 +85,6 @@ async function main() {
         name: studentData.name,
         department: studentData.department,
         year: studentData.year,
-        rfidTag: studentData.rfidTag,
       },
     });
 
@@ -113,12 +107,6 @@ async function main() {
       employeeId: 'EMP002',
       name: 'Dr. Meera Patel',
       department: 'ECE',
-    },
-    {
-      email: 'prof3@campusync.com',
-      employeeId: 'EMP003',
-      name: 'Dr. Arun Kumar',
-      department: 'CS',
     },
   ];
 
@@ -176,28 +164,12 @@ async function main() {
       professorId: professorUsers[0].professor.id,
     },
     {
-      code: 'CS102',
-      name: 'Algorithms',
-      description: 'Algorithm design and analysis',
-      credits: 3,
-      semester: '4',
-      professorId: professorUsers[0].professor.id,
-    },
-    {
-      code: 'ECE201',
+      code: 'ECE101',
       name: 'Digital Systems',
       description: 'Digital circuit design',
       credits: 4,
       semester: '4',
       professorId: professorUsers[1].professor.id,
-    },
-    {
-      code: 'CS103',
-      name: 'Database Systems',
-      description: 'Database design and SQL',
-      credits: 3,
-      semester: '4',
-      professorId: professorUsers[2].professor.id,
     },
   ];
 
@@ -213,28 +185,17 @@ async function main() {
   // ========== ENROLL STUDENTS IN COURSES ==========
   console.log('📝 Creating enrollments...');
   const enrollments = [
-    // CS101 - All students
+    // CS101 - Students 1, 2, 3, 4, 5
     { studentId: studentUsers[0].student.id, courseId: createdCourses[0].id },
     { studentId: studentUsers[1].student.id, courseId: createdCourses[0].id },
     { studentId: studentUsers[2].student.id, courseId: createdCourses[0].id },
     { studentId: studentUsers[3].student.id, courseId: createdCourses[0].id },
     { studentId: studentUsers[4].student.id, courseId: createdCourses[0].id },
 
-    // CS102 - CS students
-    { studentId: studentUsers[0].student.id, courseId: createdCourses[1].id },
-    { studentId: studentUsers[1].student.id, courseId: createdCourses[1].id },
+    // ECE101 - Students 3, 4, 5
+    { studentId: studentUsers[2].student.id, courseId: createdCourses[1].id },
     { studentId: studentUsers[3].student.id, courseId: createdCourses[1].id },
-
-    // ECE201 - ECE students
-    { studentId: studentUsers[2].student.id, courseId: createdCourses[2].id },
-    { studentId: studentUsers[4].student.id, courseId: createdCourses[2].id },
-
-    // CS103 - All students
-    { studentId: studentUsers[0].student.id, courseId: createdCourses[3].id },
-    { studentId: studentUsers[1].student.id, courseId: createdCourses[3].id },
-    { studentId: studentUsers[2].student.id, courseId: createdCourses[3].id },
-    { studentId: studentUsers[3].student.id, courseId: createdCourses[3].id },
-    { studentId: studentUsers[4].student.id, courseId: createdCourses[3].id },
+    { studentId: studentUsers[4].student.id, courseId: createdCourses[1].id },
   ];
 
   for (const enrollment of enrollments) {
@@ -245,36 +206,36 @@ async function main() {
   console.log(`  ✓ Created ${enrollments.length} enrollments`);
 
   // ========== CREATE DEVICES ==========
-  console.log('📱 Creating devices...');
+  console.log('📱 Creating MQTT wristband devices...');
   const devices = [
     {
-      deviceId: 'WRISTBAND_001',
+      deviceId: 'WB_001',
       studentId: studentUsers[0].student.id,
-      status: 'ACTIVE',
+      deviceStatus: 'ACTIVE',
       batteryLevel: 85,
     },
     {
-      deviceId: 'WRISTBAND_002',
+      deviceId: 'WB_002',
       studentId: studentUsers[1].student.id,
-      status: 'ACTIVE',
+      deviceStatus: 'ACTIVE',
       batteryLevel: 78,
     },
     {
-      deviceId: 'WRISTBAND_003',
+      deviceId: 'WB_003',
       studentId: studentUsers[2].student.id,
-      status: 'ACTIVE',
+      deviceStatus: 'ACTIVE',
       batteryLevel: 92,
     },
     {
-      deviceId: 'WRISTBAND_004',
+      deviceId: 'WB_004',
       studentId: studentUsers[3].student.id,
-      status: 'ACTIVE',
+      deviceStatus: 'ACTIVE',
       batteryLevel: 65,
     },
     {
-      deviceId: 'WRISTBAND_005',
+      deviceId: 'WB_005',
       studentId: studentUsers[4].student.id,
-      status: 'INACTIVE',
+      deviceStatus: 'INACTIVE',
       batteryLevel: 15,
     },
   ];
@@ -286,50 +247,53 @@ async function main() {
     console.log(`  ✓ Created ${deviceData.deviceId}`);
   }
 
-  // ========== CREATE TEST SESSION ==========
+  // ========== CREATE TEST SESSIONS ==========
   console.log('🎓 Creating test sessions...');
   const now = new Date();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  
   const session1 = await prisma.session.create({
     data: {
       courseId: createdCourses[0].id,
-      sessionStartTime: now,
-      sessionStatus: 'ACTIVE',
+      scheduledStartTime: tomorrow,
+      scheduledEndTime: new Date(tomorrow.getTime() + 60 * 60 * 1000), // 1 hour later
+      actualStartTime: null,
+      actualEndTime: null,
+      sessionStatus: 'SCHEDULED',
     },
   });
 
   const session2 = await prisma.session.create({
     data: {
       courseId: createdCourses[1].id,
-      sessionStartTime: yesterday,
-      sessionEndTime: new Date(yesterday.getTime() + 60 * 60 * 1000),
-      sessionStatus: 'ENDED',
+      scheduledStartTime: now,
+      scheduledEndTime: new Date(now.getTime() + 60 * 60 * 1000),
+      actualStartTime: now,
+      actualEndTime: new Date(now.getTime() + 45 * 60 * 1000),
+      sessionStatus: 'COMPLETED',
     },
   });
 
   console.log('  ✓ Created test sessions');
 
-  // ========== CREATE ATTENDANCE SESSIONS ==========
-  console.log('✅ Creating attendance sessions...');
-  await prisma.attendanceSession.create({
-    data: {
-      sessionId: session1.id,
-      studentId: studentUsers[0].student.id,
-      deviceId: (await prisma.device.findFirst({ where: { studentId: studentUsers[0].student.id } })).id,
-      sessionStartTime: now,
-      totalDurationSeconds: 0,
-      sessionStatus: 'ACTIVE',
-    },
-  });
-
-  console.log('  ✓ Created attendance sessions');
-
-  console.log('✨ Seed completed successfully!\n');
+  // ========== SUMMARY ==========
+  console.log('\n✨ Seed completed successfully!\n');
   console.log('📋 Test Credentials:');
-  console.log('   Student: student1@campusync.com / student123');
+  console.log('   Admin:    admin@campusync.com / admin123');
   console.log('   Professor: prof1@campusync.com / prof123');
-  console.log('   Admin: admin@campusync.com / admin123');
+  console.log('   Student:  student1@campusync.com / student123');
+  console.log('\n📊 Database Summary:');
+  console.log('   ✓ 1 Admin');
+  console.log('   ✓ 2 Professors');
+  console.log('   ✓ 5 Students');
+  console.log('   ✓ 2 Courses');
+  console.log('   ✓ 8 Enrollments');
+  console.log('   ✓ 5 Devices (MQTT wristbands)');
+  console.log('   ✓ 2 Sessions (for testing)');
+  console.log('\n💡 Next steps:');
+  console.log('   1. Run: npx prisma studio');
+  console.log('   2. Verify all tables are populated');
+  console.log('   3. Test login with credentials above');
 }
 
 main()

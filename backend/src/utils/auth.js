@@ -7,7 +7,7 @@ const SALT_ROUNDS = 10
 async function hashPassword(password) {
     try{
         const hashedPwd = await bcrypt.hash(password,SALT_ROUNDS);
-        return hashedPassword;
+        return hashedPwd;
     }
     catch(error){
         throw new Error('Error hashing password: '+error.message);

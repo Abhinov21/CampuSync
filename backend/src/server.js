@@ -1,50 +1,82 @@
 const express = require('express');
 const dotenv = require('dotenv');
-const cors =  require('cors');
-const {PrismaClient} = require('@prisma/client');
+const cors = require('cors');
+const { PrismaClient } = require('@prisma/client');
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-//Root route
-app.get('/',(req,res)=>{
+// Import routes
+const authRoutes = require('./routes/auth');
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'CampuSync API - MQTT-Based Attendance System',
+    version: '1.0.0',
+    status: 'running',
+  });
+});
+
+// Health check
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
     res.json({
-        message :'CampuSync API',
-        version : '1.0.0',
-        database : 'connected'
+      status: 'OK',
+      database: 'Connected',
+      timestamp: new Date().toISOString(),
     });
+  } catch (error) {
+    res.status(503).json({
+      status: 'ERROR',
+      database: 'Disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
-//health
-app.get('/health',async (req,res)=>{
-    try{
-        await prisma.$queryRaw`SELECT 1`;
+// Routes
+app.use('/auth', authRoutes);
 
-        res.json({
-        status:'OK',
-        timestamp: new Date().toISOString()
-    });
-    }catch(error){
-        res.status(500).json({
-            status: 'ERROR',
-            database: 'Disconnected',
-            error: error.message
-        });
-    }
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    status: 'error',
+    message: 'Route not found',
+    error: 'NOT_FOUND',
+    timestamp: new Date().toISOString(),
+  });
 });
 
-process.on('SIGNINT', async ()=>{
-    await prisma.$disconnect();
-    process.exit(0);
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Error:', err);
+  res.status(err.status || 500).json({
+    status: 'error',
+    message: err.message || 'Internal server error',
+    error: err.error || 'INTERNAL_ERROR',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT,()=>{
-    console.log(`Server Running on port: ${PORT}`);
-    console.log(`Database: ${prisma ? 'Connected' : 'Disconnected'}`);
+app.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔐 Auth routes: http://localhost:${PORT}/auth/login`);
 });
