@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useParams } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import AttendanceTrendChart from '../../components/charts/AttendanceTrendChart';
 import StudentBreakdownChart from '../../components/charts/StudentBreakdownChart';
@@ -83,6 +84,7 @@ export default function ProfessorAnalytics() {
     } catch (err) {
       console.error('❌ Error fetching analytics:', err);
       setError('Failed to load analytics');
+      toast.error('Failed to load analytics data');
     } finally {
       setLoading(false);
     }

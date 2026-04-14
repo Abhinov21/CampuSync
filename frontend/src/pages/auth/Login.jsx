@@ -15,6 +15,7 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await login(email, password);
+      toast.success('Login successful!');
       
       // Redirect based on role
       setTimeout(() => {
@@ -24,6 +25,7 @@ export default function Login() {
       }, 500);
     } catch (error) {
       console.error('Login error:', error);
+      toast.error(error.response?.data?.message || error.message || 'Login failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }

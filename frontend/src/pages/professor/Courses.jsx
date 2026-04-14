@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import api from '../../utils/api';
 
 export default function ProfessorCourses() {
@@ -35,6 +36,7 @@ export default function ProfessorCourses() {
     } catch (err) {
       console.error('❌ Error fetching courses:', err);
       setError('Failed to load courses');
+      toast.error('Failed to load courses. Please refresh the page.');
       setCourses([]);
     } finally {
       setLoading(false);
@@ -58,11 +60,14 @@ export default function ProfessorCourses() {
       setFormData({ name: '', code: '', description: '', credits: 3, semester: 'Spring 2024' });
       setShowModal(false);
       setError(null);
+      toast.success('Course created successfully!');
       
       await fetchCourses();
     } catch (err) {
       console.error('❌ Error creating course:', err);
-      setError(err.response?.data?.message || 'Failed to create course');
+      const errorMsg = err.response?.data?.message || 'Failed to create course';
+      setError(errorMsg);
+      toast.error(errorMsg);
     }
   };
 
@@ -72,19 +77,22 @@ export default function ProfessorCourses() {
       console.log('🚀 Starting session for course:', courseId);
       const response = await api.post(`/api/sessions/start`, { courseId });
       console.log('✅ Session started:', response.data);
+      toast.success('Session started successfully!');
       
       // Navigate to live attendance
       navigate('/professor/live-attendance');
     } catch (err) {
       console.error('❌ Error starting session:', err);
-      setError(err.response?.data?.message || 'Failed to start session');
+      const errorMsg = err.response?.data?.message || 'Failed to start session';
+      setError(errorMsg);
+      toast.error(errorMsg);
     }
   };
 
   // Export courses to CSV
   const handleExportCourses = () => {
     if (!courses || courses.length === 0) {
-      alert('No courses to export');
+      toast.error('No courses to export');
       return;
     }
 
@@ -115,6 +123,7 @@ export default function ProfessorCourses() {
     document.body.removeChild(link);
 
     console.log('✅ Courses CSV exported successfully');
+    toast.success('Courses exported successfully!');
   };
 
   return (

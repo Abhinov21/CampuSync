@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import io from 'socket.io-client';
+import toast from 'react-hot-toast';
 import StudentAttendanceCard from '../../components/StudentAttendanceCard';
 import { useAuth } from '../../hooks/useAuth';
 import api from '../../utils/api';
@@ -27,14 +28,17 @@ export default function ProfessorLiveAttendance() {
 
     newSocket.on('connect', () => {
       console.log('✅ WebSocket connected:', newSocket.id);
+      toast.success('Real-time connection established');
     });
 
     newSocket.on('disconnect', () => {
       console.log('🔴 WebSocket disconnected');
+      toast.warning('Connection lost - reconnecting...');
     });
 
     newSocket.on('error', (error) => {
       console.error('❌ WebSocket error:', error);
+      toast.error('Connection error - please refresh if issues persist');
     });
 
     setSocket(newSocket);
@@ -76,6 +80,7 @@ export default function ProfessorLiveAttendance() {
         console.error('❌ Error fetching session:', err.response?.status, err.response?.data || err.message);
         setError('Failed to load session. No active session found.');
         setSessionStatus('NO_SESSION');
+        toast.error('No active session found. Start a session to begin.');
       } finally {
         setLoading(false);
       }

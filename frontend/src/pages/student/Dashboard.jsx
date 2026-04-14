@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import { useAuth } from '../../hooks/useAuth';
 import { useCurrentSession } from '../../hooks/useAttendance';
 import SessionCard from '../../components/SessionCard';
@@ -63,6 +64,7 @@ export default function StudentDashboard() {
         setCoursesError(null);
       } catch (error) {
         setCoursesError(error.response?.data?.message || 'Failed to fetch courses');
+        toast.error('Failed to load courses');
         setCourses([]);
       } finally {
         setCoursesLoading(false);
