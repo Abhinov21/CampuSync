@@ -1,4 +1,5 @@
 const express = require('express');
+const http = require('http');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
@@ -16,6 +17,7 @@ const coursesRoutes = require('./routes/courses');
 const adminRoutes = require('./routes/admin');
 const mqttService = require('./services/mqttService');
 const eventProcessor = require('./services/eventProcessor');
+const WebSocketService = require('./services/websocketService');
 
 // Middleware
 app.use(cors());
@@ -81,8 +83,16 @@ app.use((err, req, res, next) => {
 });
 
 // Graceful shutdown
+let wsService; // Will be initialized later
+
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
+  
+  // Close WebSocket connections
+  if (wsService) {
+    console.log('🔌 Closing WebSocket connections...');
+    wsService.close();
+  }
   
   // Cleanup active sessions
   console.log('🧹 Cleaning up active sessions...');
@@ -107,6 +117,7 @@ process.on('SIGINT', async () => {
 
 // Initialize and start server
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
 
 async function startServer() {
   try {
@@ -120,15 +131,22 @@ async function startServer() {
       console.log('   This is expected in environments with restricted network access');
     }
 
-    // Attach event processor to MQTT service
+    // Initialize WebSocket service
+    wsService = new WebSocketService(server);
+    console.log('🔌 WebSocket service initialized');
+
+    // Attach event processor to MQTT service and pass wsService to eventProcessor
     mqttService.setEventProcessor(eventProcessor);
+    eventProcessor.setWebSocketService(wsService);
     console.log('📌 Event processor attached to MQTT service');
+    console.log('🔗 WebSocket service connected to event processor');
 
     // Start HTTP server
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`\n✅ Server running on http://localhost:${PORT}`);
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
       console.log(`🔐 Auth routes: http://localhost:${PORT}/auth/login`);
+      console.log(`🔗 WebSocket ready at ws://localhost:${PORT}`);
       console.log('');
     });
 

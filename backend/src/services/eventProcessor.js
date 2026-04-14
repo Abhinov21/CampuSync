@@ -24,6 +24,15 @@ const activeSessions = new Map();
 class EventProcessor {
   constructor() {
     this.sessionTimeout = 30000; // 30 seconds in milliseconds
+    this.wsService = null; // Will be set by server.js
+  }
+
+  /**
+   * Set WebSocket service for real-time updates
+   */
+  setWebSocketService(wsService) {
+    this.wsService = wsService;
+    console.log('✅ WebSocket service attached to event processor');
   }
 
   /**
@@ -181,6 +190,17 @@ class EventProcessor {
       // Set ping timeout (will auto-end session if no PING in 30 seconds)
       this.setPingTimeout(deviceId, studentId, attendanceSession.id);
 
+      // Emit WebSocket event - student joined
+      if (this.wsService) {
+        this.wsService.emitSessionCreated({
+          sessionId: currentSession.id,
+          studentId,
+          studentName: device.student.name,
+          courseId: currentSession.courseId,
+          courseName: currentSession.course ? currentSession.course.name : 'Unknown Course'
+        });
+      }
+
       console.log(`✅ Session created for device ${deviceId}, student ${studentId}`);
     } catch (error) {
       console.error("❌ Error in handleAuthEvent:", error);
@@ -220,6 +240,29 @@ class EventProcessor {
 
       // Reset timeout
       this.setPingTimeout(deviceId, studentId, session.sessionId);
+
+      // Emit WebSocket event - ping update
+      if (this.wsService) {
+        const attendanceSessions = await prisma.attendanceSession.findMany({
+          where: {
+            sessionId: session.sessionId,
+            sessionStatus: { in: ['ACTIVE', 'INCOMPLETE'] }
+          },
+          include: {
+            student: true
+          }
+        });
+
+        const stats = attendanceSessions.map(as => ({
+          studentId: as.studentId,
+          studentName: as.student ? as.student.name : 'Unknown',
+          durationSeconds: Math.floor((new Date() - as.sessionStartTime) / 1000),
+          sessionStatus: as.sessionStatus,
+          lastPingTime: session.lastPingTime
+        }));
+
+        this.wsService.emitPingUpdate(session.sessionId, stats);
+      }
 
       console.log(`✅ PING processed for device ${deviceId}, timeout reset`);
     } catch (error) {
@@ -369,16 +412,36 @@ class EventProcessor {
       // Try to get device and student info
       let deviceId = null;
       let studentId = null;
+      let studentName = null;
+      let courseId = null;
+      let courseName = null;
 
       if (payload.device) {
         const device = await prisma.device.findUnique({
           where: { deviceId: payload.device },
+          include: { student: true }
         });
         deviceId = device?.id || null;
         studentId = device?.studentId || null;
+        studentName = device?.student?.name || 'Unknown Student';
+
+        // Try to get active session for course info
+        if (studentId) {
+          const activeSession = activeSessions.get(payload.device);
+          if (activeSession) {
+            const session = await prisma.session.findUnique({
+              where: { id: activeSession.sessionId },
+              include: { course: true }
+            });
+            if (session) {
+              courseId = session.courseId;
+              courseName = session.course?.name || 'Unknown Course';
+            }
+          }
+        }
       }
 
-      await prisma.anomalyLog.create({
+      const anomaly = await prisma.anomalyLog.create({
         data: {
           anomalyType,
           description,
@@ -387,6 +450,21 @@ class EventProcessor {
           studentId,
         },
       });
+
+      // Emit WebSocket event - anomaly alert to admins
+      if (this.wsService) {
+        this.wsService.emitAnomalyAlert({
+          id: anomaly.id,
+          type: anomalyType,
+          severity: anomaly.severity,
+          description,
+          studentId,
+          studentName,
+          courseId,
+          courseName,
+          timestamp: anomaly.createdAt
+        });
+      }
     } catch (error) {
       console.error("❌ Error logging anomaly:", error.message);
     }
@@ -481,6 +559,9 @@ class EventProcessor {
           sessionEndTime: endTime,
           totalDurationSeconds: durationSeconds,
         },
+        include: {
+          student: true
+        }
       });
 
       // Create final attendance record
@@ -493,6 +574,24 @@ class EventProcessor {
       console.log(
         `✅ Session ended: Device ${deviceId}, Duration: ${duration}s, Reason: ${endReason}`
       );
+
+      // Emit WebSocket event - student session ended
+      if (this.wsService && updatedSession.sessionId) {
+        // Get session details for broadcast
+        const classSession = await prisma.session.findUnique({
+          where: { id: updatedSession.sessionId },
+          include: { course: true }
+        });
+
+        if (classSession) {
+          this.wsService.emitStudentSessionEnded(classSession.id, {
+            studentId: session.studentId,
+            studentName: updatedSession.student ? updatedSession.student.name : 'Unknown',
+            totalDurationSeconds: durationSeconds,
+            status: updatedSession.sessionStatus
+          });
+        }
+      }
 
       return updatedSession;
     } catch (error) {
