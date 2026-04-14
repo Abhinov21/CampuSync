@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
+import AttendanceTrendChart from '../../components/charts/AttendanceTrendChart';
+import StudentBreakdownChart from '../../components/charts/StudentBreakdownChart';
+import DurationDistributionChart from '../../components/charts/DurationDistributionChart';
+import PresenceTimeline from '../../components/charts/PresenceTimeline';
+import AttendanceDonutChart from '../../components/charts/AttendanceDonutChart';
 
 export default function ProfessorAnalytics() {
   const { user, logout } = useAuth();
@@ -10,6 +15,7 @@ export default function ProfessorAnalytics() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [dateRange, setDateRange] = useState('all'); // 'all', 'week', 'month'
   const [stats, setStats] = useState({
     totalSessions: 0,
     avgAttendance: 0,
@@ -19,60 +25,68 @@ export default function ProfessorAnalytics() {
 
   // Fetch course data and sessions
   useEffect(() => {
-    const fetchData = async () => {
-      if (!user || !courseId) return;
-
-      try {
-        setLoading(true);
-
-        // Fetch course details
-        const courseResponse = await api.get(`/api/courses/${courseId}`);
-        if (courseResponse.data?.data) {
-          setCourse(courseResponse.data.data);
-        }
-
-        // Fetch attendance report
-        const reportResponse = await api.get(`/api/attendance/course/${courseId}/report`);
-        console.log('📊 Report response:', reportResponse.data);
-        
-        if (reportResponse.data?.data) {
-          const data = reportResponse.data.data;
-          const sessionData = Array.isArray(data.sessions) 
-            ? data.sessions 
-            : (data.sessions ? [data.sessions] : []);
-          setSessions(sessionData);
-          
-          // Calculate statistics
-          const totalSessions = data.sessions?.length || 0;
-          const totalAttendance = data.sessions?.reduce(
-            (sum, s) => sum + (s.attendanceCount || 0),
-            0
-          ) || 0;
-          const avgAttendance = totalSessions > 0 ? Math.round(totalAttendance / totalSessions) : 0;
-          const totalStudents = data.totalStudents || 0;
-          const totalDuration = data.sessions?.reduce(
-            (sum, s) => sum + (s.avgDuration || 0),
-            0
-          ) || 0;
-          const avgDuration = totalSessions > 0 ? Math.round(totalDuration / totalSessions) : 0;
-
-          setStats({
-            totalSessions,
-            avgAttendance,
-            totalStudents,
-            avgDuration,
-          });
-        }
-      } catch (err) {
-        console.error('❌ Error fetching analytics:', err);
-        setError('Failed to load analytics');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
-  }, [courseId, user]);
+  }, [courseId, user, dateRange]);
+
+  const fetchData = async () => {
+    if (!user || !courseId) return;
+
+    try {
+      setLoading(true);
+
+      // Fetch course details
+      const courseResponse = await api.get(`/api/courses/${courseId}`);
+      if (courseResponse.data?.data) {
+        setCourse(courseResponse.data.data);
+      }
+
+      // Build query params based on date range
+      let queryParams = '';
+      if (dateRange === 'week') {
+        queryParams = '?days=7';
+      } else if (dateRange === 'month') {
+        queryParams = '?days=30';
+      }
+
+      // Fetch attendance report
+      const reportResponse = await api.get(`/api/attendance/course/${courseId}/report${queryParams}`);
+      console.log('📊 Report response:', reportResponse.data);
+      
+      if (reportResponse.data?.data) {
+        const data = reportResponse.data.data;
+        const sessionData = Array.isArray(data.sessions) 
+          ? data.sessions 
+          : (data.sessions ? [data.sessions] : []);
+        setSessions(sessionData);
+        
+        // Calculate statistics
+        const totalSessions = data.sessions?.length || 0;
+        const totalAttendance = data.sessions?.reduce(
+          (sum, s) => sum + (s.attendanceCount || 0),
+          0
+        ) || 0;
+        const avgAttendance = totalSessions > 0 ? Math.round(totalAttendance / totalSessions) : 0;
+        const totalStudents = data.totalStudents || 0;
+        const totalDuration = data.sessions?.reduce(
+          (sum, s) => sum + (s.avgDuration || 0),
+          0
+        ) || 0;
+        const avgDuration = totalSessions > 0 ? Math.round(totalDuration / totalSessions) : 0;
+
+        setStats({
+          totalSessions,
+          avgAttendance,
+          totalStudents,
+          avgDuration,
+        });
+      }
+    } catch (err) {
+      console.error('❌ Error fetching analytics:', err);
+      setError('Failed to load analytics');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Format duration in minutes
   const formatDuration = (seconds) => {
@@ -154,21 +168,65 @@ export default function ProfessorAnalytics() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
-        <div className="mb-8 flex justify-between items-start">
+        <div className="mb-8 flex justify-between items-start flex-wrap gap-4">
           <div>
             <h2 className="text-3xl font-bold text-gray-900">
               {course?.name || 'Analytics'} - Statistics & Reports
             </h2>
             {course && <p className="text-gray-600 mt-1">{course.code}</p>}
           </div>
-          {!loading && sessions.length > 0 && (
+          <div className="flex gap-3 flex-wrap">
             <button
-              onClick={handleExportCSV}
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium flex items-center gap-2"
+              onClick={fetchData}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
             >
-              📥 Export to CSV
+              🔄 Refresh
             </button>
-          )}
+            {!loading && sessions.length > 0 && (
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium flex items-center gap-2"
+              >
+                📥 Export CSV
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Date Range Filter */}
+        <div className="mb-6 flex gap-2 flex-wrap">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setDateRange('all')}
+              className={`px-4 py-2 rounded font-medium ${
+                dateRange === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              All Time
+            </button>
+            <button
+              onClick={() => setDateRange('month')}
+              className={`px-4 py-2 rounded font-medium ${
+                dateRange === 'month'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Last Month
+            </button>
+            <button
+              onClick={() => setDateRange('week')}
+              className={`px-4 py-2 rounded font-medium ${
+                dateRange === 'week'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Last Week
+            </button>
+          </div>
         </div>
 
         {/* Error Message */}
@@ -300,6 +358,45 @@ export default function ProfessorAnalytics() {
                   </table>
                 </div>
               )}
+            </div>
+
+            {/* Charts Section */}
+            <div className="mt-8">
+              <h3 className="text-2xl font-bold text-gray-900 mb-6">Analytics & Visualizations</h3>
+              
+              {/* Top Row - Main Charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <AttendanceTrendChart />
+                <AttendanceDonutChart />
+              </div>
+
+              {/* Middle Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <StudentBreakdownChart />
+                <DurationDistributionChart />
+              </div>
+
+              {/* Bottom Row */}
+              <div className="grid grid-cols-1 gap-6">
+                <PresenceTimeline />
+              </div>
+
+              {/* Export Options */}
+              <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
+                <h4 className="text-lg font-semibold text-blue-900 mb-3">📊 Export Options</h4>
+                <p className="text-blue-800 mb-4">Export detailed attendance reports in various formats:</p>
+                <div className="flex flex-wrap gap-3">
+                  <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">
+                    📥 CSV Report
+                  </button>
+                  <button className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
+                    📄 PDF Report
+                  </button>
+                  <button className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium">
+                    📋 Excel Sheet
+                  </button>
+                </div>
+              </div>
             </div>
           </>
         )}

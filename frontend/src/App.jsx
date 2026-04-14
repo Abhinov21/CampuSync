@@ -21,6 +21,7 @@ import AdminMQTTMonitor from './pages/admin/MQTTMonitor';
 import AdminActiveSessions from './pages/admin/ActiveSessions';
 import AdminAnomalies from './pages/admin/Anomalies';
 import AdminDevices from './pages/admin/Devices';
+import AdminAnalytics from './pages/admin/Analytics';
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -136,6 +137,14 @@ export default function App() {
             element={
               <ProtectedRoute requiredRole="ADMIN">
                 <AdminDevices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/analytics"
+            element={
+              <ProtectedRoute requiredRole="ADMIN">
+                <AdminAnalytics />
               </ProtectedRoute>
             }
           />
