@@ -27,6 +27,8 @@ class MQTTService {
       }
 
       console.log('🔌 Connecting to MQTT broker...');
+      console.log(`📍 Broker URL: ${brokerUrl}`);
+      console.log(`👤 Username: ${username}`);
 
       const options = {
         username,
@@ -35,10 +37,14 @@ class MQTTService {
         connectTimeout: 30000,
         clientId: process.env.MQTT_CLIENT_ID || 'campusync-backend',
         clean: true,
-        protocol: 'mqtt', // or 'mqtts' for secure
+        // Protocol determined by URL scheme (tcp://, mqtt://, wss://, etc)
+        // Do NOT override - let mqtt.js auto-detect from URL
       };
 
+      console.log('⚙️  Connection options:', JSON.stringify(options, null, 2));
+
       this.client = mqtt.connect(brokerUrl, options);
+      console.log('✨ MQTT client created, waiting for connection...');
 
       // Connection established
       this.client.on('connect', () => {

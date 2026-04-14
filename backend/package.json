@@ -10,7 +10,8 @@
     "prisma:seed": "node prisma/seed.js",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "register:device": "node register-device.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

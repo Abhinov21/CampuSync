@@ -140,6 +140,8 @@ model Enrollment {
 
   // Prevent duplicate enrollments
   @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([courseId])
   @@map("enrollments")
 }
 
@@ -178,6 +180,8 @@ model Session {
   course              Course              @relation(fields: [courseId], references: [id])
   attendanceSessions  AttendanceSession[]
 
+  @@index([courseId])
+  @@index([sessionStatus])
   @@map("sessions")
 }
 
@@ -201,6 +205,10 @@ model AttendanceSession {
   device              Device              @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   attendanceRecords   AttendanceRecord[]
 
+  @@index([deviceId])
+  @@index([studentId])
+  @@index([sessionId])
+  @@index([sessionStatus])
   @@map("attendance_sessions")
 }
 
@@ -236,6 +244,7 @@ model MQTTEventLog {
   // Index for time-based queries
   @@index([createdAt])
   @@index([deviceId])
+  @@index([status])
   @@map("mqtt_event_logs")
 }
 
@@ -252,6 +261,8 @@ model AnomalyLog {
   student         Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
   device          Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
+  @@index([deviceId])
+  @@index([studentId])
   @@index([createdAt])
   @@index([severity])
   @@map("anomaly_logs")

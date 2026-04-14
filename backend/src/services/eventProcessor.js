@@ -37,11 +37,28 @@ class EventProcessor {
 
   /**
    * Main entry point - route incoming MQTT event to appropriate handler
+   * Handles both test format (device, id) and real device format (device_mac, user_id)
    */
   async processEvent(payload) {
     console.log("📨 Processing MQTT event:", payload);
 
     try {
+      // ✨ NORMALIZE PAYLOAD: Handle both real device and test formats
+      // Real devices send: { type, device_mac, user_id, ... }
+      // Test format sends: { type, device, id, ... }
+      
+      // Map device_mac → device (real device format)
+      if (payload.device_mac && !payload.device) {
+        payload.device = payload.device_mac;
+        console.log(`🔄 Mapped device_mac → device: ${payload.device}`);
+      }
+      
+      // Map user_id → id (real device format)
+      if (payload.user_id !== undefined && !payload.id) {
+        payload.id = payload.user_id;
+        console.log(`🔄 Mapped user_id → id: ${payload.id}`);
+      }
+
       // Validate basic structure
       if (!payload.type || !payload.device) {
         await this.logAnomaly("INVALID_PAYLOAD", payload, "Missing type or device field");
@@ -134,7 +151,7 @@ class EventProcessor {
         },
       });
 
-      if (existingAttendance && existingAttendance.status === "PRESENT") {
+      if (existingAttendance && existingAttendance.sessionStatus === "ACTIVE") {
         await this.logAnomaly(
           "DUPLICATE_ATTENDANCE",
           payload,
@@ -555,7 +572,7 @@ class EventProcessor {
       const updatedSession = await prisma.attendanceSession.update({
         where: { id: session.sessionId },
         data: {
-          sessionStatus: endReason === "PING_TIMEOUT" ? "INCOMPLETE" : "PRESENT",
+          sessionStatus: "ENDED",
           sessionEndTime: endTime,
           totalDurationSeconds: durationSeconds,
         },
