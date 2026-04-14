@@ -211,4 +211,92 @@ router.get('/my-courses', authenticateToken, authorizeRole(['PROFESSOR']), async
   }
 });
 
+/**
+ * POST /api/courses
+ * Create a new course (Professor only)
+ */
+router.post('/', authenticateToken, authorizeRole(['PROFESSOR']), async (req, res) => {
+  try {
+    const { name, code, description, credits, semester } = req.body;
+    const userId = req.user.userId;
+
+    // Validation
+    if (!name || !code) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Course name and code are required',
+        error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify professor exists
+    const professor = await prisma.professor.findUnique({
+      where: { userId },
+    });
+
+    if (!professor) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Professor profile not found',
+        error: 'PROFESSOR_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if course code already exists for this professor
+    const existingCourse = await prisma.course.findFirst({
+      where: {
+        code,
+        professorId: professor.id,
+      },
+    });
+
+    if (existingCourse) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Course with this code already exists',
+        error: 'COURSE_EXISTS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Create course
+    const course = await prisma.course.create({
+      data: {
+        name,
+        code,
+        description: description || '',
+        credits: parseInt(credits) || 3,
+        semester: semester || 'Spring 2024',
+        professorId: professor.id,
+      },
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Course created successfully',
+      data: {
+        id: course.id,
+        name: course.name,
+        code: course.code,
+        description: course.description,
+        credits: course.credits,
+        semester: course.semester,
+        enrolledStudents: 0,
+        totalSessions: 0,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /courses:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to create course',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 module.exports = router;
