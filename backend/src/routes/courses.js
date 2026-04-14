@@ -56,7 +56,7 @@ router.get('/', authenticateToken, async (req, res) => {
             where: {
               studentId: student.id,
               session: { courseId: enrollment.courseId },
-              sessionStatus: 'PRESENT',
+              sessionStatus: 'ENDED',
             },
           });
 

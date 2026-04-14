@@ -246,7 +246,7 @@ class EventProcessor {
         const attendanceSessions = await prisma.attendanceSession.findMany({
           where: {
             sessionId: session.sessionId,
-            sessionStatus: { in: ['ACTIVE', 'INCOMPLETE'] }
+            sessionStatus: { in: ['ACTIVE', 'ENDED'] }
           },
           include: {
             student: true

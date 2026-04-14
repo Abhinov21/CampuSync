@@ -170,7 +170,7 @@ router.patch(
       const studentAttendance = attendanceSessions.map((att) => ({
         studentId: att.student.id,
         name: att.student.user.email.split('@')[0],
-        attended: att.sessionStatus === 'PRESENT',
+        attended: att.sessionStatus === 'ENDED' || att.sessionStatus === 'ACTIVE',
         durationSeconds: att.totalDurationSeconds,
         attendancePercentage: 100, // Will be calculated by frontend
       }));
@@ -350,7 +350,7 @@ router.get(
       });
 
       const attended = attendanceSessions.filter(
-        (s) => s.sessionStatus === 'PRESENT'
+        (s) => s.sessionStatus === 'ENDED' || s.sessionStatus === 'ACTIVE'
       ).length;
       const absent = totalEnrolled - attended;
 
@@ -370,7 +370,7 @@ router.get(
         studentId: att.student.id,
         name: att.student.user.email.split('@')[0],
         rollNumber: att.student.rollNumber,
-        attended: att.sessionStatus === 'PRESENT',
+        attended: att.sessionStatus === 'ENDED' || att.sessionStatus === 'ACTIVE',
         durationSeconds: att.totalDurationSeconds,
       }));
 

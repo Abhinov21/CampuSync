@@ -118,7 +118,7 @@ router.get('/history', authenticateToken, async (req, res) => {
     const total = await prisma.attendanceSession.count({
       where: {
         studentId: student.id,
-        sessionStatus: { in: ['PRESENT', 'INCOMPLETE'] },
+        sessionStatus: { in: ['ACTIVE', 'ENDED'] },
       },
     });
 
@@ -126,7 +126,7 @@ router.get('/history', authenticateToken, async (req, res) => {
     const sessions = await prisma.attendanceSession.findMany({
       where: {
         studentId: student.id,
-        sessionStatus: { in: ['PRESENT', 'INCOMPLETE'] },
+        sessionStatus: { in: ['ACTIVE', 'ENDED'] },
       },
       include: {
         session: {
@@ -239,7 +239,7 @@ router.get('/course/:courseId', authenticateToken, async (req, res) => {
       where: {
         studentId: student.id,
         session: { courseId },
-        sessionStatus: { in: ['PRESENT', 'INCOMPLETE'] },
+        sessionStatus: { in: ['ACTIVE', 'ENDED'] },
       },
       include: { session: true },
       orderBy: { sessionStartTime: 'desc' },
@@ -251,7 +251,7 @@ router.get('/course/:courseId', authenticateToken, async (req, res) => {
     });
 
     const attendedSessions = attendanceSessions.filter(
-      (s) => s.sessionStatus === 'PRESENT'
+      (s) => s.sessionStatus === 'ENDED' || s.sessionStatus === 'ACTIVE'
     ).length;
 
     const attendancePercentage =
