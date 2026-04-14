@@ -18,7 +18,7 @@ const { authenticateToken } = require('../utils/auth');
  */
 router.get('/current', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     // Get student ID from User
     const student = await prisma.student.findUnique({
@@ -96,7 +96,7 @@ router.get('/current', authenticateToken, async (req, res) => {
  */
 router.get('/history', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
 
@@ -195,7 +195,7 @@ router.get('/history', authenticateToken, async (req, res) => {
 router.get('/course/:courseId', authenticateToken, async (req, res) => {
   try {
     const { courseId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     // Get student ID
     const student = await prisma.student.findUnique({

@@ -86,6 +86,20 @@ router.post('/register', async (req, res) => {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
+    // Convert year to integer for STUDENT role
+    let yearInt = null;
+    if (role === 'STUDENT' && year) {
+      yearInt = parseInt(year, 10);
+      if (isNaN(yearInt)) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Invalid year value. Must be a number.',
+          error: 'INVALID_YEAR',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
     // Create user and profile in transaction
     let user, profile;
 
@@ -104,7 +118,7 @@ router.post('/register', async (req, res) => {
           name,
           rollNumber,
           department,
-          year,
+          year: yearInt,
         },
       });
     } else if (role === 'PROFESSOR') {
