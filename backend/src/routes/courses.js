@@ -211,4 +211,156 @@ router.get('/my-courses', authenticateToken, authorizeRole(['PROFESSOR']), async
   }
 });
 
+/**
+ * POST /api/courses
+ * Create a new course (Professor only)
+ */
+router.post('/', authenticateToken, authorizeRole(['PROFESSOR']), async (req, res) => {
+  try {
+    const { name, code, description, credits, semester } = req.body;
+    const userId = req.user.userId;
+
+    // Validation
+    if (!name || !code) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Course name and code are required',
+        error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify professor exists
+    const professor = await prisma.professor.findUnique({
+      where: { userId },
+    });
+
+    if (!professor) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Professor profile not found',
+        error: 'PROFESSOR_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if course code already exists for this professor
+    const existingCourse = await prisma.course.findFirst({
+      where: {
+        code,
+        professorId: professor.id,
+      },
+    });
+
+    if (existingCourse) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Course with this code already exists',
+        error: 'COURSE_EXISTS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Create course
+    const course = await prisma.course.create({
+      data: {
+        name,
+        code,
+        description: description || '',
+        credits: parseInt(credits) || 3,
+        semester: semester || 'Spring 2024',
+        professorId: professor.id,
+      },
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Course created successfully',
+      data: {
+        id: course.id,
+        name: course.name,
+        code: course.code,
+        description: course.description,
+        credits: course.credits,
+        semester: course.semester,
+        enrolledStudents: 0,
+        totalSessions: 0,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /courses:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to create course',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * GET /api/courses/:courseId
+ * Get a specific course by ID
+ */
+router.get('/:courseId', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      include: {
+        professor: { include: { user: true } },
+      },
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Course not found',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get additional stats
+    const enrolledStudents = await prisma.enrollment.count({
+      where: { courseId },
+    });
+
+    const totalSessions = await prisma.session.count({
+      where: { courseId },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Course fetched',
+      data: {
+        id: course.id,
+        name: course.name,
+        code: course.code,
+        description: course.description,
+        credits: course.credits,
+        semester: course.semester,
+        professor: {
+          id: course.professor.id,
+          name: course.professor.user.email.split('@')[0],
+          email: course.professor.user.email,
+        },
+        enrolledStudents,
+        totalSessions,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /courses/:courseId:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch course',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 module.exports = router;

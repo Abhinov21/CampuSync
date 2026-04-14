@@ -61,10 +61,8 @@ router.get(
       res.status(200).json({
         status: 'success',
         message: 'Active sessions fetched',
-        data: {
-          activeSessions: formattedSessions,
-          total: formattedSessions.length,
-        },
+        sessions: formattedSessions,
+        total: formattedSessions.length,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -119,12 +117,10 @@ router.get(
       res.status(200).json({
         status: 'success',
         message: 'MQTT logs fetched',
-        data: {
-          logs: formattedLogs,
-          total,
-          limit,
-          offset,
-        },
+        logs: formattedLogs,
+        total,
+        limit,
+        offset,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -182,12 +178,10 @@ router.get(
       res.status(200).json({
         status: 'success',
         message: 'Anomalies fetched',
-        data: {
-          anomalies: formattedAnomalies,
-          total,
-          limit,
-          offset,
-        },
+        anomalies: formattedAnomalies,
+        total,
+        limit,
+        offset,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -240,12 +234,10 @@ router.get(
       res.status(200).json({
         status: 'success',
         message: 'Devices fetched',
-        data: {
-          devices: formattedDevices,
-          total,
-          limit,
-          offset,
-        },
+        devices: formattedDevices,
+        total,
+        limit,
+        offset,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -253,6 +245,109 @@ router.get(
       res.status(500).json({
         status: 'error',
         message: 'Failed to fetch devices',
+        error: 'INTERNAL_ERROR',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/admin/analytics/overview
+ * Get analytics overview with stats
+ */
+router.get(
+  '/analytics/overview',
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const days = parseInt(req.query.days) || 999999; // Default to all time
+      const daysAgo = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      // Total sessions
+      const totalSessions = await prisma.session.count({
+        where: {
+          createdAt: { gte: daysAgo },
+        },
+      });
+
+      // Total students
+      const totalStudents = await prisma.student.count();
+
+      // Total attendance records
+      const totalAttendanceRecords = await prisma.attendanceSession.count({
+        where: {
+          createdAt: { gte: daysAgo },
+        },
+      });
+
+      // Active courses
+      const activeCourses = await prisma.course.count({
+        where: {
+          sessions: {
+            some: {
+              createdAt: { gte: daysAgo },
+            },
+          },
+        },
+      });
+
+      // Average attendance percentage
+      const attendanceSessions = await prisma.attendanceSession.findMany({
+        where: {
+          createdAt: { gte: daysAgo },
+        },
+      });
+
+      const averageAttendance =
+        attendanceSessions.length > 0
+          ? Math.round(
+              (attendanceSessions.filter((a) => a.sessionStatus === 'COMPLETED').length /
+                attendanceSessions.length) *
+                100
+            )
+          : 0;
+
+      // Average duration
+      const sessions = await prisma.session.findMany({
+        where: { createdAt: { gte: daysAgo } },
+      });
+
+      let averageDuration = 0;
+      if (sessions.length > 0) {
+        const totalDuration = sessions.reduce((sum, session) => {
+          if (session.scheduledStartTime && session.actualEndTime) {
+            return (
+              sum +
+              (new Date(session.actualEndTime) -
+                new Date(session.scheduledStartTime)) /
+                (1000 * 60)
+            ); // minutes
+          }
+          return sum;
+        }, 0);
+        averageDuration = Math.round(totalDuration / sessions.length);
+      }
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Analytics overview fetched',
+        stats: {
+          totalSessions,
+          totalStudents,
+          averageAttendance,
+          averageDuration,
+          activeCourses,
+          totalAttendanceRecords,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error in GET /admin/analytics/overview:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch analytics overview',
         error: 'INTERNAL_ERROR',
         timestamp: new Date().toISOString(),
       });

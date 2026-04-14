@@ -287,4 +287,104 @@ router.get('/course/:courseId', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/attendance/course/:courseId/report
+ * Get attendance report for a course (for analytics)
+ */
+router.get('/course/:courseId/report', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const userId = req.user.userId;
+
+    // Get professor to verify ownership
+    const professor = await prisma.professor.findUnique({
+      where: { userId },
+    });
+
+    if (!professor) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Professor profile not found',
+        error: 'PROFESSOR_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify professor owns this course
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+    });
+
+    if (!course || course.professorId !== professor.id) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Access denied to this course',
+        error: 'FORBIDDEN',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get all sessions for this course with attendance data
+    const sessions = await prisma.session.findMany({
+      where: { courseId },
+      include: {
+        attendanceSessions: true,
+      },
+    });
+
+    // Calculate statistics
+    let totalStudents = 0;
+    let totalAttendanceRecords = 0;
+    const sessionStats = [];
+
+    for (const session of sessions) {
+      const attendanceCount = session.attendanceSessions.filter(
+        (a) => a.sessionStatus === 'PRESENT' || a.sessionStatus === 'CHECKED_IN'
+      ).length;
+      
+      sessionStats.push({
+        id: session.id,
+        scheduledDate: session.scheduledStartTime,
+        totalEnrolled: session.attendanceSessions.length,
+        attended: attendanceCount,
+        absent: session.attendanceSessions.length - attendanceCount,
+        attendanceRate:
+          session.attendanceSessions.length > 0
+            ? ((attendanceCount / session.attendanceSessions.length) * 100).toFixed(2)
+            : 0,
+      });
+
+      totalStudents = Math.max(totalStudents, session.attendanceSessions.length);
+      totalAttendanceRecords += attendanceCount;
+    }
+
+    // Calculate overall statistics
+    const overallAttendanceRate = sessions.length > 0
+      ? ((totalAttendanceRecords / (totalStudents * sessions.length)) * 100).toFixed(2)
+      : 0;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Attendance report retrieved',
+      data: {
+        courseId,
+        courseName: course.name,
+        totalSessions: sessions.length,
+        totalStudents,
+        overallAttendanceRate: parseFloat(overallAttendanceRate),
+        sessions: sessionStats,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /attendance/course/:courseId/report:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch attendance report',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 module.exports = router;

@@ -21,16 +21,29 @@ import AdminMQTTMonitor from './pages/admin/MQTTMonitor';
 import AdminActiveSessions from './pages/admin/ActiveSessions';
 import AdminAnomalies from './pages/admin/Anomalies';
 import AdminDevices from './pages/admin/Devices';
+import AdminAnalytics from './pages/admin/Analytics';
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
   const { isAuthenticated, user } = useAuthStore();
 
+  console.log('[ProtectedRoute]', {
+    isAuthenticated,
+    userRole: user?.role,
+    requiredRole,
+    userEmail: user?.email,
+  });
+
   if (!isAuthenticated) {
+    console.warn('[ProtectedRoute] Not authenticated - redirecting to login');
     return <Navigate to="/login" replace />;
   }
 
   if (requiredRole && user?.role !== requiredRole) {
+    console.warn('[ProtectedRoute] Role mismatch:', {
+      expected: requiredRole,
+      actual: user?.role,
+    });
     return <Navigate to="/login" replace />;
   }
 
@@ -98,7 +111,7 @@ export default function App() {
             }
           />
           <Route
-            path="/professor/analytics"
+            path="/professor/analytics/:courseId"
             element={
               <ProtectedRoute requiredRole="PROFESSOR">
                 <ProfessorAnalytics />
@@ -136,6 +149,14 @@ export default function App() {
             element={
               <ProtectedRoute requiredRole="ADMIN">
                 <AdminDevices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/analytics"
+            element={
+              <ProtectedRoute requiredRole="ADMIN">
+                <AdminAnalytics />
               </ProtectedRoute>
             }
           />
