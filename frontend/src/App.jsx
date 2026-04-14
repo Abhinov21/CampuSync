@@ -98,7 +98,7 @@ export default function App() {
             }
           />
           <Route
-            path="/professor/analytics"
+            path="/professor/analytics/:courseId"
             element={
               <ProtectedRoute requiredRole="PROFESSOR">
                 <ProfessorAnalytics />
