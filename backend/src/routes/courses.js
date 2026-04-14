@@ -18,7 +18,7 @@ const authorizeRole = require('../utils/auth').authorizeRole;
  */
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const role = req.user.role;
 
     let courses = [];
@@ -150,7 +150,7 @@ router.get('/', authenticateToken, async (req, res) => {
  */
 router.get('/my-courses', authenticateToken, authorizeRole(['PROFESSOR']), async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     const professor = await prisma.professor.findUnique({
       where: { userId },

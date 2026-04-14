@@ -18,7 +18,7 @@ const { authenticateToken } = require('../utils/auth');
  */
 router.get('/current', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     // Get student ID from User
     const student = await prisma.student.findUnique({
@@ -96,7 +96,7 @@ router.get('/current', authenticateToken, async (req, res) => {
  */
 router.get('/history', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
 
@@ -140,15 +140,21 @@ router.get('/history', authenticateToken, async (req, res) => {
 
     // Calculate attendance percentage for each session
     const formattedSessions = sessions.map((att) => {
-      const sessionDuration = att.session.scheduledEndTime
-        ? Math.floor(
-            (att.session.scheduledEndTime - att.session.scheduledStartTime) /
+      // Calculate session duration safely
+      let sessionDuration = 0;
+      if (att.session.scheduledStartTime && att.session.scheduledEndTime) {
+        try {
+          sessionDuration = Math.floor(
+            (new Date(att.session.scheduledEndTime) - new Date(att.session.scheduledStartTime)) /
               1000
-          )
-        : 0;
+          );
+        } catch (e) {
+          sessionDuration = 0;
+        }
+      }
 
       const attendancePercentage =
-        sessionDuration > 0
+        sessionDuration > 0 && att.totalDurationSeconds > 0
           ? Math.round(
               (att.totalDurationSeconds / sessionDuration) * 100 * 100
             ) / 100
@@ -195,7 +201,7 @@ router.get('/history', authenticateToken, async (req, res) => {
 router.get('/course/:courseId', authenticateToken, async (req, res) => {
   try {
     const { courseId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     // Get student ID
     const student = await prisma.student.findUnique({
