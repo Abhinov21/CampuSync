@@ -226,6 +226,46 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Validate that the user's role has the appropriate profile
+    let roleValid = true;
+    let roleIssue = null;
+    
+    if (user.role === 'STUDENT') {
+      const student = await prisma.student.findUnique({
+        where: { userId: user.id },
+      });
+      if (!student) {
+        roleValid = false;
+        roleIssue = 'Account has STUDENT role but no student profile exists';
+      }
+    } else if (user.role === 'PROFESSOR') {
+      const professor = await prisma.professor.findUnique({
+        where: { userId: user.id },
+      });
+      if (!professor) {
+        roleValid = false;
+        roleIssue = 'Account has PROFESSOR role but no professor profile exists';
+      }
+    } else if (user.role === 'ADMIN') {
+      const admin = await prisma.admin.findUnique({
+        where: { userId: user.id },
+      });
+      if (!admin) {
+        roleValid = false;
+        roleIssue = 'Account has ADMIN role but no admin profile exists';
+      }
+    }
+
+    if (!roleValid) {
+      console.error('❌ ROLE VALIDATION FAILED:', roleIssue);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Account configuration error: ' + roleIssue,
+        error: 'ROLE_CONFIGURATION_ERROR',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // Generate token
     const token = generateToken({
       userId: user.id,
@@ -248,6 +288,8 @@ router.post('/login', async (req, res) => {
         where: { userId: user.id },
       });
     }
+
+    console.log(`✅ Login successful: ${email} (role: ${user.role})`);
 
     return res.status(200).json({
       status: 'success',

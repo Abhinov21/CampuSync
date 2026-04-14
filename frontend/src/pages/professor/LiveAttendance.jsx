@@ -1,18 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import io from 'socket.io-client';
 import toast from 'react-hot-toast';
 import StudentAttendanceCard from '../../components/StudentAttendanceCard';
 import { useAuth } from '../../hooks/useAuth';
 import api from '../../utils/api';
+import { diagnoseAuth, fixAuth, verifyPermission } from '../../utils/authDiagnostics';
 
 export default function ProfessorLiveAttendance() {
   const { user, logout } = useAuth();
   const [currentSession, setCurrentSession] = useState(null);
   const [students, setStudents] = useState([]);
+  const [studentsDetails, setStudentsDetails] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
   const [sessionStatus, setSessionStatus] = useState('LOADING'); // LOADING, ACTIVE, ENDED
+  const isInitialLoadRef = useRef(true);
+  const hasShownErrorRef = useRef(false);
+  const isLoggingOutRef = useRef(false);
+
+  // Handle logout with proper cleanup
+  const handleLogout = () => {
+    isLoggingOutRef.current = true;
+    if (socket) {
+      socket.disconnect();
+    }
+    logout();
+  };
 
   // Initialize WebSocket connection
   useEffect(() => {
@@ -33,7 +47,10 @@ export default function ProfessorLiveAttendance() {
 
     newSocket.on('disconnect', () => {
       console.log('🔴 WebSocket disconnected');
-      toast.error('Connection lost - reconnecting...');
+      // Only show disconnect toast if not intentional logout
+      if (!isLoggingOutRef.current) {
+        toast.error('Connection lost - reconnecting...');
+      }
     });
 
     newSocket.on('error', (error) => {
@@ -53,8 +70,14 @@ export default function ProfessorLiveAttendance() {
     if (!socket || !user) return;
 
     const fetchSession = async () => {
-      try {
+      // Only show loading on initial load, not on interval refreshes
+      const isInitialLoad = isInitialLoadRef.current;
+      if (isInitialLoad) {
         setLoading(true);
+        isInitialLoadRef.current = false;
+      }
+
+      try {
         console.log('📊 Fetching active session for professor...');
         
         const response = await api.get('/api/sessions/active');
@@ -65,6 +88,8 @@ export default function ProfessorLiveAttendance() {
           console.log('✅ Active session found:', session);
           setCurrentSession(session);
           setSessionStatus('ACTIVE');
+          setError(null); // Clear any previous errors on success
+          hasShownErrorRef.current = false;
 
           // Join WebSocket room for this session
           if (socket && socket.connected) {
@@ -73,21 +98,46 @@ export default function ProfessorLiveAttendance() {
           }
         } else {
           console.log('ℹ️ No active session found');
-          setCurrentSession(null);
-          setSessionStatus('NO_SESSION');
+          // Only set as NO_SESSION if we had no session before
+          if (!currentSession) {
+            setCurrentSession(null);
+            setSessionStatus('NO_SESSION');
+            if (!hasShownErrorRef.current) {
+              setError('Failed to load session. No active session found.');
+              hasShownErrorRef.current = true;
+            }
+          }
         }
       } catch (err) {
         console.error('❌ Error fetching session:', err.response?.status, err.response?.data || err.message);
-        setError('Failed to load session. No active session found.');
-        setSessionStatus('NO_SESSION');
-        toast.error('No active session found. Start a session to begin.');
+        
+        // Only show error if it's the initial load or if we don't have current session
+        if (isInitialLoad) {
+          setError('Failed to load session. No active session found.');
+          setSessionStatus('NO_SESSION');
+          if (!hasShownErrorRef.current) {
+            toast.error('No active session found. Start a session to begin.');
+            hasShownErrorRef.current = true;
+          }
+        } else {
+          // On interval refreshes, just log silently if we have a current session
+          if (currentSession) {
+            console.log('ℹ️ Interval refresh encountered error, but session data still available');
+          }
+        }
       } finally {
-        setLoading(false);
+        if (isInitialLoad) {
+          setLoading(false);
+        }
       }
     };
 
     fetchSession();
-  }, [socket, user]);
+
+    // Set interval to refresh session data every 3 seconds to update counts
+    const interval = setInterval(fetchSession, 3000);
+    return () => clearInterval(interval);
+  }, [socket, user, currentSession]);
 
   // Listen for WebSocket events
   useEffect(() => {
@@ -143,11 +193,38 @@ export default function ProfessorLiveAttendance() {
       return;
     }
 
+    // VERIFICATION: Verify permission before attempting to end
+    const permission = verifyPermission('PROFESSOR');
+    if (!permission.allowed) {
+      console.error('❌ PERMISSION DENIED:', permission.reason);
+      alert(`⚠️ Permission denied: ${permission.reason}\n\nDiagnosing authentication...`);
+      
+      // Run diagnostics
+      const diag = await diagnoseAuth();
+      
+      // Offer to fix authentication
+      if (diag.issues?.length > 0) {
+        const fixAuth = window.confirm(
+          `Authentication issues detected:\n${diag.issues.join('\n')}\n\nWould you like to log out and log back in?`
+        );
+        if (fixAuth) {
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('user');
+          window.location.href = '/login';
+        }
+      }
+      return;
+    }
+
     const confirmed = window.confirm('Are you sure you want to end this session? This action cannot be undone.');
     if (!confirmed) return;
 
     try {
       console.log('🛑 Ending session:', currentSession.id);
+      console.log('🔍 DEBUG: Current session object:', currentSession);
+      console.log('🔍 DEBUG: User role verification:', user?.role);
+      console.log('🔍 DEBUG: Permission verified: PROFESSOR');
+      
       const response = await api.patch(`/api/sessions/${currentSession.id}/end`);
       console.log('✅ Session ended successfully:', response.data);
       setSessionStatus('ENDED');
@@ -158,8 +235,26 @@ export default function ProfessorLiveAttendance() {
         window.location.href = '/professor/courses';
       }, 2000);
     } catch (err) {
-      console.error('❌ Error ending session:', err.response?.data || err.message);
-      alert(`Error ending session: ${err.response?.data?.message || err.message}`);
+      console.error('❌ Error ending session');
+      
+      // Log detailed error info
+      const errorData = err.response?.data || {};
+      console.error('  Status:', err.response?.status);
+      console.error('  Message:', errorData.message);
+      console.error('  Token role:', errorData.userRole);
+      console.error('  Required roles:', errorData.requiredRoles);
+      
+      // If 403, suggest re-authentication
+      if (err.response?.status === 403) {
+        const shouldDiagnose = window.confirm(
+          `Authorization failed (403): ${errorData.message}\n\nToken role: "${errorData.userRole}" requires: "${errorData.requiredRoles?.[0]}"\n\nWould you like to diagnose this issue?`
+        );
+        if (shouldDiagnose) {
+          diagnoseAuth();
+        }
+      } else {
+        alert(`Error ending session: ${errorData.message || err.message}`);
+      }
     }
   };
 
@@ -172,7 +267,7 @@ export default function ProfessorLiveAttendance() {
           <div className="flex items-center gap-4">
             <span className="text-gray-700">{user?.profile?.name || user?.email}</span>
             <button
-              onClick={logout}
+              onClick={handleLogout}
               className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
             >
               Logout
@@ -267,24 +362,29 @@ export default function ProfessorLiveAttendance() {
         {/* Statistics */}
         {!loading && sessionStatus !== 'NO_SESSION' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <div className="bg-white rounded-lg shadow p-4">
-              <p className="text-sm text-gray-600">Present</p>
-              <p className="text-3xl font-bold text-green-600">{students.length}</p>
-              <p className="text-xs text-gray-500 mt-1">Students checked in</p>
+            <div className="bg-green-50 rounded-lg shadow p-6 border-l-4 border-green-600">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold text-gray-700">PRESENT</p>
+                <span className="text-green-600 text-xl">✓</span>
+              </div>
+              <p className="text-4xl font-bold text-green-600">{currentSession?.presentCount || 0}</p>
+              <p className="text-xs text-gray-600 mt-2">Students checked in</p>
             </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <p className="text-sm text-gray-600">Enrolled</p>
-              <p className="text-3xl font-bold text-blue-600">
-                {currentSession?.enrolledStudents || 0}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Total students in class</p>
+            <div className="bg-blue-50 rounded-lg shadow p-6 border-l-4 border-blue-600">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold text-gray-700">ENROLLED</p>
+                <span className="text-blue-600 text-xl">👥</span>
+              </div>
+              <p className="text-4xl font-bold text-blue-600">{currentSession?.enrolledCount || 0}</p>
+              <p className="text-xs text-gray-600 mt-2">Total registered students</p>
             </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <p className="text-sm text-gray-600">Absent</p>
-              <p className="text-3xl font-bold text-red-600">
-                {Math.max(0, (currentSession?.enrolledStudents || 0) - students.length)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Students not present</p>
+            <div className="bg-red-50 rounded-lg shadow p-6 border-l-4 border-red-600">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold text-gray-700">ABSENT</p>
+                <span className="text-red-600 text-xl">✗</span>
+              </div>
+              <p className="text-4xl font-bold text-red-600">{currentSession?.absentCount || 0}</p>
+              <p className="text-xs text-gray-600 mt-2">Not yet checked in</p>
             </div>
           </div>
         )}
@@ -292,15 +392,26 @@ export default function ProfessorLiveAttendance() {
         {/* Students Grid */}
         {!loading && students.length === 0 && sessionStatus !== 'NO_SESSION' && (
           <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
-            <p className="text-gray-600">Waiting for students to join...</p>
+            <p className="text-gray-600 text-lg">⏳ Waiting for students to join...</p>
+            <p className="text-gray-500 text-sm mt-2">Students will appear here once they check in</p>
           </div>
         )}
 
         {!loading && students.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {students.map((student) => (
-              <StudentAttendanceCard key={student.id || student.attendanceSessionId} student={student} />
-            ))}
+          <div>
+            <div className="mb-6">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-semibold">
+                  PRESENT STUDENTS ({students.length})
+                </span>
+              </h3>
+              <p className="text-gray-600 text-sm mt-2">Students currently checked in to this session</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {students.map((student) => (
+                <StudentAttendanceCard key={student.id || student.attendanceSessionId} student={student} />
+              ))}
+            </div>
           </div>
         )}
       </div>

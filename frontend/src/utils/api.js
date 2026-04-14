@@ -8,11 +8,39 @@ const api = axios.create({
   },
 });
 
+// Helper to decode JWT without verification (for debugging)
+const decodeToken = (token) => {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map((c) => {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+};
+
 // Add token to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+    
+    // Log token info for sensitive endpoints
+    if (config.url?.includes('/end') || config.url?.includes('/start')) {
+      const decoded = decodeToken(token);
+      console.log('🔐 Token Debug Info:', {
+        url: config.url,
+        method: config.method,
+        userRole: decoded?.role,
+        userId: decoded?.userId,
+        email: decoded?.email,
+        tokenExpiry: new Date(decoded?.exp * 1000).toISOString(),
+        tokenValid: decoded?.exp > Date.now() / 1000,
+      });
+    }
   }
   return config;
 }, (error) => {

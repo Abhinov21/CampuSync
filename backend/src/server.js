@@ -141,6 +141,9 @@ async function startServer() {
     console.log('📌 Event processor attached to MQTT service');
     console.log('🔗 WebSocket service connected to event processor');
 
+    // Attach wsService to app for use in routes
+    app.locals.wsService = wsService;
+
     // Start HTTP server
     server.listen(PORT, () => {
       console.log(`\n✅ Server running on http://localhost:${PORT}`);

@@ -90,11 +90,22 @@ const authorizeRole = (allowedRoles) => {
       });
     }
 
+    console.log('🔍 AUTHZ DEBUG: Checking role authorization');
+    console.log('  Required roles:', allowedRoles);
+    console.log('  User role:', req.user.role);
+    console.log('  Has access:', allowedRoles.includes(req.user.role));
+
     if (!allowedRoles.includes(req.user.role)) {
+      console.error('❌ AUTHZ FAILED: Role mismatch');
+      console.error('  User:', req.user);
+      console.error('  Expected one of:', allowedRoles);
+      console.error('  Got:', req.user.role);
       return res.status(403).json({
         status: 'error',
         message: 'Insufficient permissions',
         error: 'FORBIDDEN',
+        userRole: req.user.role,
+        requiredRoles: allowedRoles,
         timestamp: new Date().toISOString(),
       });
     }

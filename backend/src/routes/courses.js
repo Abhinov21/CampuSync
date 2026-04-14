@@ -363,4 +363,321 @@ router.get('/:courseId', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/students
+ * Get all registered students (Professor can view this)
+ */
+router.get('/admin/students-list', authenticateToken, authorizeRole(['PROFESSOR', 'ADMIN']), async (req, res) => {
+  try {
+    const students = await prisma.student.findMany({
+      include: {
+        user: true,
+        enrollments: {
+          include: { course: true },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const formattedStudents = students.map((student) => ({
+      id: student.id,
+      name: student.name,
+      email: student.user.email,
+      rollNumber: student.rollNumber,
+      department: student.department,
+      year: student.year,
+      enrolledCourses: student.enrollments.length,
+      courses: student.enrollments.map((e) => ({
+        id: e.course.id,
+        name: e.course.name,
+        code: e.course.code,
+      })),
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Students fetched',
+      students: formattedStudents,
+      total: formattedStudents.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /admin/students-list:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch students',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * GET /api/courses/:courseId/students
+ * Get all students enrolled in a specific course (Professor can view)
+ */
+router.get('/:courseId/students', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    // Verify course exists and user is the professor
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      include: { professor: true },
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Course not found',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if user is the professor of this course
+    if (req.user.userId !== course.professor.userId && req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Only the course professor can view enrolled students',
+        error: 'FORBIDDEN',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
+      where: { courseId },
+      include: {
+        student: {
+          include: { user: true },
+        },
+      },
+      orderBy: { student: { name: 'asc' } },
+    });
+
+    const students = enrollments.map((enrollment) => ({
+      id: enrollment.student.id,
+      name: enrollment.student.name,
+      email: enrollment.student.user.email,
+      rollNumber: enrollment.student.rollNumber,
+      department: enrollment.student.department,
+      year: enrollment.student.year,
+      enrolledAt: enrollment.enrolledAt,
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Course students fetched',
+      courseId,
+      courseName: course.name,
+      students,
+      total: students.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /courses/:courseId/students:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch course students',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * POST /api/courses/:courseId/enroll
+ * Add a student to a course (Professor action)
+ */
+router.post('/:courseId/enroll', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { studentId } = req.body;
+
+    if (!studentId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Student ID is required',
+        error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify course exists and user is the professor
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      include: { professor: true },
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Course not found',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if user is the professor of this course
+    if (req.user.userId !== course.professor.userId && req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Only the course professor can enroll students',
+        error: 'FORBIDDEN',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify student exists
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student not found',
+        error: 'STUDENT_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if already enrolled
+    const existingEnrollment = await prisma.enrollment.findUnique({
+      where: {
+        studentId_courseId: {
+          studentId,
+          courseId,
+        },
+      },
+    });
+
+    if (existingEnrollment) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Student is already enrolled in this course',
+        error: 'ALREADY_ENROLLED',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Create enrollment
+    const enrollment = await prisma.enrollment.create({
+      data: {
+        studentId,
+        courseId,
+      },
+      include: {
+        student: { include: { user: true } },
+      },
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Student enrolled successfully',
+      enrollment: {
+        id: enrollment.id,
+        studentName: enrollment.student.name,
+        email: enrollment.student.user.email,
+        courseId,
+        courseName: course.name,
+        enrolledAt: enrollment.enrolledAt,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /courses/:courseId/enroll:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to enroll student',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * DELETE /api/courses/:courseId/students/:studentId
+ * Remove a student from a course (Professor action)
+ */
+router.delete('/:courseId/students/:studentId', authenticateToken, async (req, res) => {
+  try {
+    const { courseId, studentId } = req.params;
+
+    // Verify course exists and user is the professor
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      include: { professor: true },
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Course not found',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Check if user is the professor of this course
+    if (req.user.userId !== course.professor.userId && req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Only the course professor can remove students',
+        error: 'FORBIDDEN',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Find and delete enrollment
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        studentId_courseId: {
+          studentId,
+          courseId,
+        },
+      },
+      include: { student: { include: { user: true } } },
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student not enrolled in this course',
+        error: 'NOT_ENROLLED',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    await prisma.enrollment.delete({
+      where: {
+        studentId_courseId: {
+          studentId,
+          courseId,
+        },
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Student removed from course',
+      data: {
+        studentName: enrollment.student.name,
+        email: enrollment.student.user.email,
+        courseId,
+        courseName: course.name,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in DELETE /courses/:courseId/students/:studentId:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to remove student',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 module.exports = router;
