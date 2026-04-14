@@ -156,7 +156,7 @@ router.patch(
       const updatedSession = await prisma.session.update({
         where: { id: sessionId },
         data: {
-          sessionStatus: 'ENDED',
+          sessionStatus: 'COMPLETED',
           actualEndTime: endTime,
         },
       });
@@ -413,5 +413,77 @@ router.get(
     }
   }
 );
+
+/**
+ * GET /api/sessions/active
+ * Get currently active session for professor (if any)
+ */
+router.get('/active', authenticateToken, authorizeRole(['PROFESSOR']), async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get professor
+    const professor = await prisma.professor.findUnique({
+      where: { userId },
+    });
+
+    if (!professor) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Professor profile not found',
+        error: 'PROFESSOR_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Find active session for this professor's courses
+    const activeSession = await prisma.session.findFirst({
+      where: {
+        course: { professorId: professor.id },
+        sessionStatus: 'ACTIVE',
+      },
+      include: {
+        course: true,
+      },
+    });
+
+    if (!activeSession) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'No active session',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get student count in this session
+    const studentCount = await prisma.attendanceSession.count({
+      where: { sessionId: activeSession.id },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Active session found',
+      data: {
+        id: activeSession.id,
+        courseId: activeSession.courseId,
+        courseName: activeSession.course.name,
+        sessionStartTime: activeSession.scheduledStartTime,
+        sessionEndTime: activeSession.scheduledEndTime,
+        sessionStatus: activeSession.sessionStatus,
+        studentCount,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /sessions/active:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch active session',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
 
 module.exports = router;

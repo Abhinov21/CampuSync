@@ -27,11 +27,23 @@ import AdminAnalytics from './pages/admin/Analytics';
 function ProtectedRoute({ children, requiredRole }) {
   const { isAuthenticated, user } = useAuthStore();
 
+  console.log('[ProtectedRoute]', {
+    isAuthenticated,
+    userRole: user?.role,
+    requiredRole,
+    userEmail: user?.email,
+  });
+
   if (!isAuthenticated) {
+    console.warn('[ProtectedRoute] Not authenticated - redirecting to login');
     return <Navigate to="/login" replace />;
   }
 
   if (requiredRole && user?.role !== requiredRole) {
+    console.warn('[ProtectedRoute] Role mismatch:', {
+      expected: requiredRole,
+      actual: user?.role,
+    });
     return <Navigate to="/login" replace />;
   }
 

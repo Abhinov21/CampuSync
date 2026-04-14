@@ -299,4 +299,68 @@ router.post('/', authenticateToken, authorizeRole(['PROFESSOR']), async (req, re
   }
 });
 
+/**
+ * GET /api/courses/:courseId
+ * Get a specific course by ID
+ */
+router.get('/:courseId', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.params;
+
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+      include: {
+        professor: { include: { user: true } },
+      },
+    });
+
+    if (!course) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Course not found',
+        error: 'NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get additional stats
+    const enrolledStudents = await prisma.enrollment.count({
+      where: { courseId },
+    });
+
+    const totalSessions = await prisma.session.count({
+      where: { courseId },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Course fetched',
+      data: {
+        id: course.id,
+        name: course.name,
+        code: course.code,
+        description: course.description,
+        credits: course.credits,
+        semester: course.semester,
+        professor: {
+          id: course.professor.id,
+          name: course.professor.user.email.split('@')[0],
+          email: course.professor.user.email,
+        },
+        enrolledStudents,
+        totalSessions,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /courses/:courseId:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch course',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 module.exports = router;

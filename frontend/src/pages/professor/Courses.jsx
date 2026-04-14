@@ -28,7 +28,8 @@ export default function ProfessorCourses() {
       const response = await api.get('/api/courses/my-courses');
       console.log('📋 Courses response:', response.data);
       
-      const courseData = response.data?.data || response.data?.courses || [];
+      // Response format: {data: {courses: [...], total: N}}
+      const courseData = response.data?.data?.courses || response.data?.courses || [];
       const coursesArray = Array.isArray(courseData) ? courseData : [];
       
       setCourses(coursesArray);

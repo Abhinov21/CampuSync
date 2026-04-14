@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import api from '../../utils/api';
+import AdminSidebar from '../../components/AdminSidebar';
 import toast from 'react-hot-toast';
 
 export default function AdminDevices() {
@@ -104,10 +105,13 @@ export default function AdminDevices() {
             </div>
           </div>
         </nav>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading devices...</p>
+        <div className="flex">
+          <AdminSidebar />
+          <div className="flex-1 flex items-center justify-center min-h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading devices...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -128,7 +132,12 @@ export default function AdminDevices() {
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex">
+        {/* Sidebar */}
+        <AdminSidebar />
+
+        {/* Main Content */}
+        <div className="flex-1 px-8 py-8">
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-4">Devices Registry</h2>
 
@@ -345,6 +354,7 @@ export default function AdminDevices() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import api from '../../utils/api';
+import AdminSidebar from '../../components/AdminSidebar';
 import toast from 'react-hot-toast';
 
 export default function AdminActiveSessions() {
@@ -11,7 +12,7 @@ export default function AdminActiveSessions() {
 
   useEffect(() => {
     fetchActiveSessions();
-    const interval = setInterval(fetchActiveSessions, 5000); // Refresh every 5 seconds
+    const interval = setInterval(fetchActiveSessions, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -39,7 +40,7 @@ export default function AdminActiveSessions() {
   const calculateDuration = (startTime) => {
     const start = new Date(startTime);
     const now = new Date();
-    const diff = Math.floor((now - start) / 1000); // in seconds
+    const diff = Math.floor((now - start) / 1000);
     const hours = Math.floor(diff / 3600);
     const mins = Math.floor((diff % 3600) / 60);
     const secs = diff % 60;
@@ -60,10 +61,13 @@ export default function AdminActiveSessions() {
             </div>
           </div>
         </nav>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading active sessions...</p>
+        <div className="flex">
+          <AdminSidebar />
+          <div className="flex-1 flex items-center justify-center min-h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading active sessions...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -84,99 +88,96 @@ export default function AdminActiveSessions() {
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">Active Sessions</h2>
+      <div className="flex">
+        <AdminSidebar />
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
-              <p className="text-sm text-gray-600">Active Right Now</p>
-              <p className="text-3xl font-bold text-green-600">{sessions.length}</p>
-            </div>
-            <div className="bg-white p-4 rounded-lg shadow border-l-4 border-blue-500">
-              <p className="text-sm text-gray-600">Displayed</p>
-              <p className="text-3xl font-bold text-blue-600">{filteredSessions.length}</p>
-            </div>
-          </div>
+        <div className="flex-1 px-8 py-8">
+          <div className="mb-8">
+            <h2 className="text-3xl font-bold text-gray-900 mb-4">Active Sessions</h2>
 
-          {/* Controls */}
-          <div className="flex gap-3 mb-6 flex-wrap">
-            <input
-              type="text"
-              placeholder="Filter by student name, ID, or course..."
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="flex-1 px-4 py-2 border rounded border-gray-300 focus:outline-none focus:border-blue-500"
-            />
-            <button
-              onClick={fetchActiveSessions}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold"
-            >
-              🔄 Refresh
-            </button>
-          </div>
-        </div>
-
-        {/* Sessions List */}
-        {filteredSessions.length === 0 ? (
-          <div className="bg-gray-100 p-8 rounded-lg text-center">
-            <p className="text-gray-600">
-              {sessions.length === 0 ? 'No active sessions right now' : 'No sessions matching filter'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredSessions.map((session) => (
-              <div key={session.id} className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500 hover:shadow-lg transition">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Left side */}
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-2">
-                      {session.student?.profile?.name || session.studentId}
-                    </h3>
-                    <div className="space-y-1 text-sm text-gray-600">
-                      <p><strong>Course:</strong> {session.course?.name || 'N/A'}</p>
-                      <p><strong>Student ID:</strong> {session.studentId}</p>
-                      <p><strong>Device ID:</strong> <span className="font-mono text-xs bg-gray-100 px-2 py-1">{session.deviceId}</span></p>
-                    </div>
-                  </div>
-
-                  {/* Right side */}
-                  <div className="flex flex-col justify-between">
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">Session Duration</p>
-                      <p className="text-3xl font-mono font-bold text-green-600">
-                        {calculateDuration(session.sessionStartTime)}
-                      </p>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-4">
-                      Started: {new Date(session.sessionStartTime).toLocaleTimeString()}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Status badge */}
-                <div className="mt-4 flex gap-2">
-                  <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded-full">
-                    ● ACTIVE
-                  </span>
-                  {session.recheckCount && session.recheckCount > 0 && (
-                    <span className="inline-block px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded-full">
-                      ⟳ Rechecked {session.recheckCount}x
-                    </span>
-                  )}
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
+                <p className="text-sm text-gray-600">Active Right Now</p>
+                <p className="text-3xl font-bold text-green-600">{sessions.length}</p>
               </div>
-            ))}
-          </div>
-        )}
+              <div className="bg-white p-4 rounded-lg shadow border-l-4 border-blue-500">
+                <p className="text-sm text-gray-600">Displayed</p>
+                <p className="text-3xl font-bold text-blue-600">{filteredSessions.length}</p>
+              </div>
+            </div>
 
-        {/* Auto-refresh info */}
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p className="text-sm text-blue-800">
-            💡 <strong>Tip:</strong> This page automatically refreshes every 5 seconds. Duration counters update in real-time.
-          </p>
+            <div className="flex gap-3 mb-6 flex-wrap">
+              <input
+                type="text"
+                placeholder="Filter by student name, ID, or course..."
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="flex-1 px-4 py-2 border rounded border-gray-300 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={fetchActiveSessions}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold"
+              >
+                🔄 Refresh
+              </button>
+            </div>
+
+            {filteredSessions.length === 0 ? (
+              <div className="bg-gray-100 p-8 rounded-lg text-center">
+                <p className="text-gray-600">
+                  {sessions.length === 0 ? 'No active sessions right now' : 'No sessions matching filter'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {filteredSessions.map((session) => (
+                  <div key={session.id} className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500 hover:shadow-lg transition">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">
+                          {session.student?.profile?.name || session.studentId}
+                        </h3>
+                        <div className="space-y-1 text-sm text-gray-600">
+                          <p><strong>Course:</strong> {session.course?.name || 'N/A'}</p>
+                          <p><strong>Student ID:</strong> {session.studentId}</p>
+                          <p><strong>Device ID:</strong> <span className="font-mono text-xs bg-gray-100 px-2 py-1">{session.deviceId}</span></p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col justify-between">
+                        <div>
+                          <p className="text-sm text-gray-600 mb-1">Session Duration</p>
+                          <p className="text-3xl font-mono font-bold text-green-600">
+                            {calculateDuration(session.sessionStartTime)}
+                          </p>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-4">
+                          Started: {new Date(session.sessionStartTime).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex gap-2">
+                      <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded-full">
+                        ● ACTIVE
+                      </span>
+                      {session.recheckCount && session.recheckCount > 0 && (
+                        <span className="inline-block px-3 py-1 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded-full">
+                          ⟳ Rechecked {session.recheckCount}x
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-800">
+                💡 <strong>Tip:</strong> This page automatically refreshes every 5 seconds. Duration counters update in real-time.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import AdminSidebar from '../../components/AdminSidebar';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
 import AttendanceTrendChart from '../../components/charts/AttendanceTrendChart';
@@ -72,21 +73,25 @@ export default function AdminAnalytics() {
         </div>
       </nav>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8 flex justify-between items-start flex-wrap gap-4">
-          <div>
-            <h2 className="text-3xl font-bold text-gray-900">System-Wide Analytics</h2>
-            <p className="text-gray-600 mt-1">Global statistics and insights for CampuSync</p>
+      <div className="flex">
+        {/* Sidebar */}
+        <AdminSidebar />
+
+        {/* Main Content */}
+        <div className="flex-1 px-8 py-8">
+          {/* Header */}
+          <div className="mb-8 flex justify-between items-start flex-wrap gap-4">
+            <div>
+              <h2 className="text-3xl font-bold text-gray-900">System-Wide Analytics</h2>
+              <p className="text-gray-600 mt-1">Global statistics and insights for CampuSync</p>
+            </div>
+            <button
+              onClick={fetchAnalytics}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+            >
+              🔄 Refresh
+            </button>
           </div>
-          <button
-            onClick={fetchAnalytics}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
-          >
-            🔄 Refresh
-          </button>
-        </div>
 
         {/* Date Range Filter */}
         <div className="mb-6 flex gap-2 flex-wrap">
@@ -252,6 +257,7 @@ export default function AdminAnalytics() {
             </div>
           </>
         )}
+        </div>
       </div>
     </div>
   );

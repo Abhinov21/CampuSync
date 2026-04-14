@@ -33,7 +33,7 @@ export default function ProfessorLiveAttendance() {
 
     newSocket.on('disconnect', () => {
       console.log('🔴 WebSocket disconnected');
-      toast.warning('Connection lost - reconnecting...');
+      toast.error('Connection lost - reconnecting...');
     });
 
     newSocket.on('error', (error) => {
