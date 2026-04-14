@@ -140,15 +140,21 @@ router.get('/history', authenticateToken, async (req, res) => {
 
     // Calculate attendance percentage for each session
     const formattedSessions = sessions.map((att) => {
-      const sessionDuration = att.session.scheduledEndTime
-        ? Math.floor(
-            (att.session.scheduledEndTime - att.session.scheduledStartTime) /
+      // Calculate session duration safely
+      let sessionDuration = 0;
+      if (att.session.scheduledStartTime && att.session.scheduledEndTime) {
+        try {
+          sessionDuration = Math.floor(
+            (new Date(att.session.scheduledEndTime) - new Date(att.session.scheduledStartTime)) /
               1000
-          )
-        : 0;
+          );
+        } catch (e) {
+          sessionDuration = 0;
+        }
+      }
 
       const attendancePercentage =
-        sessionDuration > 0
+        sessionDuration > 0 && att.totalDurationSeconds > 0
           ? Math.round(
               (att.totalDurationSeconds / sessionDuration) * 100 * 100
             ) / 100

@@ -48,6 +48,14 @@ export default function App() {
 
           {/* Student Routes */}
           <Route
+            path="/student"
+            element={
+              <ProtectedRoute requiredRole="STUDENT">
+                <StudentDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/student/dashboard"
             element={
               <ProtectedRoute requiredRole="STUDENT">
