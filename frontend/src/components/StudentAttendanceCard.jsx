@@ -30,45 +30,78 @@ export default function StudentAttendanceCard({ student }) {
       .padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Extract student info from nested or flat structure
+  const studentName = student.student?.name || student.studentName || student.name || 'Unknown';
+  const rollNumber = student.student?.rollNumber || student.rollNumber || 'N/A';
+  const department = student.student?.department || student.department || 'N/A';
+  const deviceId = student.deviceId || 'N/A';
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow">
-      {/* Student Info */}
-      <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">
-          {student.student?.name || student.studentName || 'Unknown Student'}
-        </h3>
-        <p className="text-sm text-gray-600">
-          Roll: {student.student?.rollNumber || student.rollNumber || 'N/A'}
-        </p>
-        <p className="text-sm text-gray-600">
-          Dept: {student.student?.department || student.department || 'N/A'}
-        </p>
+    <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow border-l-4 border-green-500 overflow-hidden">
+      {/* Card Header */}
+      <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-4 py-3 border-b border-green-100">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">{studentName}</h3>
+            <p className="text-xs text-gray-600 mt-1">Roll: {rollNumber}</p>
+          </div>
+          <span className="inline-block px-2 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded">
+            ✓ Present
+          </span>
+        </div>
       </div>
 
-      {/* Device Info */}
-      <div className="mb-4 p-2 bg-gray-50 rounded">
-        <p className="text-xs text-gray-600">Device ID: {student.deviceId}</p>
+      {/* Student Details */}
+      <div className="px-4 py-3 space-y-3">
+        {/* Department */}
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 text-sm">🏢</span>
+          <div>
+            <p className="text-xs text-gray-500">Department</p>
+            <p className="text-sm font-medium text-gray-900">{department}</p>
+          </div>
+        </div>
+
+        {/* Device ID */}
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 text-sm">📱</span>
+          <div>
+            <p className="text-xs text-gray-500">Device ID</p>
+            <p className="text-sm font-mono bg-gray-100 px-2 py-1 rounded text-gray-800">{deviceId}</p>
+          </div>
+        </div>
+
+        {/* Confidence if available */}
         {student.confidence && (
-          <p className="text-xs text-gray-600">Confidence: {student.confidence}%</p>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 text-sm">📊</span>
+            <div>
+              <p className="text-xs text-gray-500">Confidence</p>
+              <div className="flex items-center gap-2">
+                <div className="w-24 bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-green-600 h-2 rounded-full"
+                    style={{ width: `${student.confidence}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm font-medium text-gray-900">{student.confidence}%</p>
+              </div>
+            </div>
+          </div>
         )}
-      </div>
 
-      {/* Duration */}
-      <div className="mb-4 p-3 bg-blue-50 rounded text-center">
-        <p className="text-xs text-gray-600 mb-1">Session Duration</p>
-        <p className="text-2xl font-bold text-blue-600 font-mono">
-          {formatDuration(duration)}
-        </p>
-      </div>
+        {/* Session Duration */}
+        <div className="bg-blue-50 rounded-lg p-3 mt-4">
+          <p className="text-xs text-gray-600 mb-1 font-semibold">⏱️ Session Duration</p>
+          <p className="text-2xl font-bold text-blue-600 font-mono">
+            {formatDuration(duration)}
+          </p>
+        </div>
 
-      {/* Status Badge */}
-      <div className="flex items-center justify-between">
-        <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
-          ✓ Present
-        </span>
-        <span className="text-xs text-gray-500">
-          {student.lastUpdate ? new Date(student.lastUpdate).toLocaleTimeString() : 'Just now'}
-        </span>
+        {/* Last Update */}
+        <div className="text-xs text-gray-500 pt-2 border-t border-gray-100">
+          Last update: {student.lastUpdate ? new Date(student.lastUpdate).toLocaleTimeString() : 'Just now'}
+        </div>
       </div>
     </div>
   );

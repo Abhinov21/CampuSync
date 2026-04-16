@@ -3,14 +3,18 @@ import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
+import ManageEnrollments from '../../components/ManageEnrollments';
 
 export default function ProfessorCourses() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
+  const [activeSessions, setActiveSessions] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showManageEnrollments, setShowManageEnrollments] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     code: '',
@@ -28,7 +32,6 @@ export default function ProfessorCourses() {
       const response = await api.get('/api/courses/my-courses');
       console.log('📋 Courses response:', response.data);
       
-      // Response format: {data: {courses: [...], total: N}}
       const courseData = response.data?.data?.courses || response.data?.courses || [];
       const coursesArray = Array.isArray(courseData) ? courseData : [];
       
@@ -44,11 +47,43 @@ export default function ProfessorCourses() {
     }
   };
 
+  // Fetch all active sessions
+  const fetchActiveSessions = async () => {
+    try {
+      const response = await api.get('/api/sessions/all-active');
+      console.log('📊 Active sessions:', response.data);
+      
+      // Build map of courseId -> session
+      const sessionMap = {};
+      if (response.data?.data?.sessions && Array.isArray(response.data.data.sessions)) {
+        response.data.data.sessions.forEach(session => {
+          sessionMap[session.courseId] = session;
+        });
+      }
+      setActiveSessions(sessionMap);
+      console.log('✅ Updated active sessions map:', sessionMap);
+    } catch (err) {
+      // 404 is ok - just means no active sessions
+      if (err.response?.status !== 404) {
+        console.error('❌ Error fetching active sessions:', err);
+      }
+      setActiveSessions({});
+    }
+  };
+
   useEffect(() => {
     fetchCourses();
   }, [user]);
 
-  // Handle form submission
+  // Auto-refresh active sessions every 5 seconds
+  useEffect(() => {
+    if (courses.length > 0) {
+      fetchActiveSessions();
+      const interval = setInterval(fetchActiveSessions, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [courses.length]);
+
   const handleCreateCourse = async (e) => {
     e.preventDefault();
 
@@ -72,13 +107,15 @@ export default function ProfessorCourses() {
     }
   };
 
-  // Start session for a course
   const handleStartSession = async (courseId) => {
     try {
       console.log('🚀 Starting session for course:', courseId);
       const response = await api.post(`/api/sessions/start`, { courseId });
       console.log('✅ Session started:', response.data);
       toast.success('Session started successfully!');
+      
+      // Refresh sessions immediately
+      await fetchActiveSessions();
       
       // Navigate to live attendance
       navigate('/professor/live-attendance');
@@ -90,7 +127,52 @@ export default function ProfessorCourses() {
     }
   };
 
-  // Export courses to CSV
+  const handleEndSession = async (courseId, sessionId) => {
+    const confirmed = window.confirm('Are you sure you want to end this session? All students will be notified.');
+    if (!confirmed) return;
+
+    try {
+      console.log('🛑 Ending session:', sessionId);
+      const response = await api.patch(`/api/sessions/${sessionId}/end`);
+      console.log('✅ Session ended:', response.data);
+      toast.success('Session ended successfully!');
+      
+      // CRITICAL: Clear session immediately from state before refreshing
+      setActiveSessions(prev => {
+        const updated = { ...prev };
+        delete updated[courseId];
+        console.log('🗑️  Cleared session from state for course:', courseId);
+        return updated;
+      });
+
+      // Then refresh both to make sure database is in sync
+      await Promise.all([
+        fetchActiveSessions(),
+        fetchCourses()
+      ]);
+      
+      console.log('✅ Dashboard updated - session cleared');
+    } catch (err) {
+      console.error('❌ Error ending session:', err);
+      const errorMsg = err.response?.data?.message || 'Failed to end session';
+      toast.error(errorMsg);
+    }
+  };
+
+  const handleManageEnrollments = (course) => {
+    setSelectedCourse(course);
+    setShowManageEnrollments(true);
+  };
+
+  const handleCloseManageEnrollments = () => {
+    setShowManageEnrollments(false);
+    setSelectedCourse(null);
+  };
+
+  const handleEnrollmentsUpdated = () => {
+    fetchCourses();
+  };
+
   const handleExportCourses = () => {
     if (!courses || courses.length === 0) {
       toast.error('No courses to export');
@@ -146,7 +228,12 @@ export default function ProfessorCourses() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-8 flex justify-between items-center">
-          <h2 className="text-3xl font-bold text-gray-900">My Courses</h2>
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900">My Courses</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Active Sessions: <span className="font-bold text-green-600">{Object.keys(activeSessions).length}</span>
+            </p>
+          </div>
           <div className="flex gap-2">
             {!loading && courses && courses.length > 0 && (
               <button
@@ -192,37 +279,84 @@ export default function ProfessorCourses() {
           </div>
         ) : (
           <div className="space-y-4">
-            {Array.isArray(courses) && courses.map((course) => (
-              <div key={course.id} className="bg-white rounded-lg shadow p-6">
-                <div className="flex justify-between items-start">
-                  <div className="flex-grow">
-                    <h3 className="text-xl font-bold text-gray-900">{course.name}</h3>
-                    <p className="text-sm text-gray-600 mt-1">{course.code}</p>
-                    {course.description && (
-                      <p className="text-gray-700 mt-2">{course.description}</p>
-                    )}
-                    <div className="mt-3 flex items-center gap-4 text-sm text-gray-600">
-                      <span>📚 {course.credits} Credits</span>
-                      <span>👥 {course.enrolledStudents || 0} Students</span>
+            {Array.isArray(courses) && courses.map((course) => {
+              const hasActiveSession = activeSessions[course.id];
+              const sessionData = hasActiveSession ? activeSessions[course.id] : null;
+              
+              return (
+                <div 
+                  key={course.id} 
+                  className={`rounded-lg shadow p-6 border-l-4 ${
+                    hasActiveSession 
+                      ? 'bg-green-50 border-green-500' 
+                      : 'bg-white border-gray-200'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-grow">
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-xl font-bold text-gray-900">{course.name}</h3>
+                        {hasActiveSession && (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-500 text-white text-xs font-bold rounded-full animate-pulse">
+                            🔴 LIVE SESSION
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 mt-1">{course.code}</p>
+                      {course.description && (
+                        <p className="text-gray-700 mt-2">{course.description}</p>
+                      )}
+                      <div className="mt-3 flex items-center gap-4 text-sm text-gray-600">
+                        <span>📚 {course.credits} Credits</span>
+                        <span>👥 {course.enrolledStudents || 0} Students</span>
+                        {hasActiveSession && sessionData && (
+                          <span className="text-green-700 font-semibold">⏱️ {sessionData.studentCount} students in session</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 flex-wrap justify-end">
+                      <button
+                        onClick={() => handleManageEnrollments(course)}
+                        className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm font-medium"
+                      >
+                        👥 Manage
+                      </button>
+                      {!hasActiveSession ? (
+                        <>
+                          <button
+                            onClick={() => handleStartSession(course.id)}
+                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-medium"
+                          >
+                            📍 Start
+                          </button>
+                          <button
+                            onClick={() => navigate(`/professor/analytics/${course.id}`)}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
+                          >
+                            📊 Analytics
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => navigate('/professor/live-attendance')}
+                            className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-sm font-medium animate-pulse"
+                          >
+                            👁️ View Live
+                          </button>
+                          <button
+                            onClick={() => handleEndSession(course.id, sessionData.id)}
+                            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-medium"
+                          >
+                            🛑 End Session
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleStartSession(course.id)}
-                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm font-medium"
-                    >
-                      📍 Start Session
-                    </button>
-                    <button
-                      onClick={() => navigate(`/professor/analytics/${course.id}`)}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
-                    >
-                      📊 Analytics
-                    </button>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -311,6 +445,16 @@ export default function ProfessorCourses() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Manage Enrollments Modal */}
+      {showManageEnrollments && selectedCourse && (
+        <ManageEnrollments
+          courseId={selectedCourse.id}
+          courseName={selectedCourse.name}
+          onClose={handleCloseManageEnrollments}
+          onUpdate={handleEnrollmentsUpdated}
+        />
       )}
     </div>
   );

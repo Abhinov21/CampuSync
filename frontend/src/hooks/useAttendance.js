@@ -1,6 +1,9 @@
 import { useAttendanceStore } from '../store/attendanceStore';
 import api from '../utils/api';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import toast from 'react-hot-toast';
+import { io } from 'socket.io-client';
+import { setGlobalSocket } from './useAuth';
 
 export const useAttendance = () => {
   const { currentSession, activeSessions, allSessions, setCurrentSession, setActiveSessions, setAllSessions } = useAttendanceStore();
@@ -61,32 +64,111 @@ export const useAttendance = () => {
 
 /**
  * Hook for loading current session with loading/error states
- * Auto-refreshes every 30 seconds
+ * Auto-refreshes more frequently when session is active to detect end quickly
  */
 export const useCurrentSession = () => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [sessionEnded, setSessionEnded] = useState(false);
+  const socketRef = useRef(null);
 
   const fetchSession = useCallback(async () => {
     try {
-      setLoading(true);
       setError(null);
       const response = await api.get('/api/attendance/current');
-      setSession(response.data.data?.currentSession || null);
+      const newSession = response.data.data?.currentSession || null;
+      
+      // Log session state changes for debugging
+      if (session && !newSession) {
+        console.log('🔴 Session ended detected by client');
+        // Show notification that session has ended
+        if (!sessionEnded) {
+          toast.error('Session has ended. Thank you for attending!');
+          setSessionEnded(true);
+        }
+      } else if (!session && newSession) {
+        console.log('🟢 New session started:', newSession.courseName);
+        setSessionEnded(false);
+      }
+      
+      setSession(newSession);
+      setLoading(false);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to fetch session');
       setSession(null);
-    } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session, sessionEnded]);
 
   useEffect(() => {
+    // Initial fetch
     fetchSession();
-    const interval = setInterval(fetchSession, 30000); // Refresh every 30 seconds
+    
+    // Refresh intervals:
+    // - Every 5 seconds when session is ACTIVE (detect end quickly)
+    // - Every 30 seconds when no session (check for new session start)
+    const interval = setInterval(fetchSession, session ? 5000 : 30000);
+    
     return () => clearInterval(interval);
+  }, [fetchSession, session]);
+
+  // Listen for real-time session-ended events via WebSocket
+  useEffect(() => {
+    try {
+      // Connect to WebSocket
+      if (!socketRef.current) {
+        socketRef.current = io(window.location.origin, {
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          reconnectionAttempts: 5
+        });
+
+        console.log('🔗 WebSocket listener initialized');
+        setGlobalSocket(socketRef.current);
+
+        // Listen for session-ended event
+        socketRef.current.on('session-event', (data) => {
+          console.log('📢 WebSocket event received:', data);
+          
+          if (data.type === 'session-ended') {
+            console.log('🔴 Session end event detected - refreshing dashboard');
+            // Immediately refresh session without waiting
+            fetchSession();
+          }
+        });
+
+        // Handle disconnection
+        socketRef.current.on('disconnect', () => {
+          console.log('ℹ️ WebSocket disconnected (normal)');
+        });
+
+        // Handle reconnection errors silently
+        socketRef.current.on('error', (error) => {
+          if (error) {
+            console.log('ℹ️ WebSocket connection issue (will auto-reconnect)');
+          }
+        });
+      }
+
+      return () => {
+        // Don't disconnect - keep alive for background updates
+      };
+    } catch (err) {
+      console.log('ℹ️ WebSocket setup skipped (optional feature)');
+    }
   }, [fetchSession]);
+
+  // Cleanup socket on component unmount
+  useEffect(() => {
+    return () => {
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.disconnect();
+        console.log('🔌 WebSocket disconnected on component unmount');
+      }
+    };
+  }, []);
 
   return { session, loading, error, refetch: fetchSession };
 };

@@ -2,6 +2,13 @@ import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
+// Global socket instance for cleanup
+let globalSocket = null;
+
+export const setGlobalSocket = (socket) => {
+  globalSocket = socket;
+};
+
 export const useAuth = () => {
   const { user, token, setUser, setToken, logout: logoutStore } = useAuthStore();
 
@@ -36,6 +43,13 @@ export const useAuth = () => {
   };
 
   const logout = () => {
+    // Disconnect WebSocket before logging out
+    if (globalSocket) {
+      globalSocket.disconnect();
+      console.log('🔌 WebSocket disconnected on logout');
+      globalSocket = null;
+    }
+
     logoutStore();
     toast.success('Logged out successfully');
   };

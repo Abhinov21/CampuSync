@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../hooks/useAuth';
 import { useCurrentSession } from '../../hooks/useAttendance';
@@ -15,7 +15,7 @@ import api from '../../utils/api';
  */
 export default function StudentDashboard() {
   const { user, logout } = useAuth();
-  const { session, loading: sessionLoading, error: sessionError } = useCurrentSession();
+  const { session, loading: sessionLoading, error: sessionError, refetch: refetchSession } = useCurrentSession();
   
   const [stats, setStats] = useState({
     presentCount: 0,
@@ -27,6 +27,9 @@ export default function StudentDashboard() {
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [coursesError, setCoursesError] = useState(null);
+  
+  // Track which sessions we've already joined to avoid duplicate toasts
+  const joinedSessions = useRef(new Set());
 
   // Fetch statistics from attendance history
   useEffect(() => {
@@ -73,6 +76,59 @@ export default function StudentDashboard() {
 
     fetchCourses();
   }, []);
+
+  // Auto-join active sessions in enrolled courses
+  useEffect(() => {
+    if (courses && courses.length > 0) {
+      const autoJoinSessions = async () => {
+        for (const course of courses) {
+          try {
+            console.log('🔍 Checking for active session in course:', course.name);
+            const response = await api.post('/api/attendance/join-session', {
+              courseId: course.id,
+            });
+            if (response.data?.status === 'success') {
+              // Only show toast if we haven't already joined this session
+              if (!joinedSessions.current.has(course.id)) {
+                // Check if it's a new join (not "already joined")
+                if (!response.data?.message?.includes('Already')) {
+                  console.log('✅ Joined active session:', course.name);
+                  toast.success(`Joined session for ${course.name}`);
+                  joinedSessions.current.add(course.id);
+                }
+              }
+              // Trigger refresh of current session
+              if (refetchSession) {
+                refetchSession();
+              }
+            }
+          } catch (error) {
+            // No active session - remove from joined set
+            // This allows showing the message again if session restarts
+            if (error.response?.status === 404) {
+              joinedSessions.current.delete(course.id);
+              console.log(`ℹ️ No active session for ${course.name}`);
+            } else {
+              console.log(`ℹ️ Error joining session for ${course.name}:`, error.message);
+            }
+          }
+        }
+      };
+
+      autoJoinSessions();
+      
+      // Only retry every 10 seconds if there's no active session
+      // This prevents continuous retries when already joined
+      const retryInterval = setInterval(() => {
+        // Only retry if we don't have an active session
+        if (!session) {
+          autoJoinSessions();
+        }
+      }, 10000);
+      
+      return () => clearInterval(retryInterval);
+    }
+  }, [courses, refetchSession, session]);
 
   const handleLogout = () => {
     logout();

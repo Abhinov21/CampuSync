@@ -19,6 +19,7 @@ const { authenticateToken } = require('../utils/auth');
 router.get('/current', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    console.log('📍 GET /api/attendance/current - Fetching for student:', userId);
 
     // Get student ID from User
     const student = await prisma.student.findUnique({
@@ -26,6 +27,7 @@ router.get('/current', authenticateToken, async (req, res) => {
     });
 
     if (!student) {
+      console.log('❌ Student profile not found for userId:', userId);
       return res.status(404).json({
         status: 'error',
         message: 'Student profile not found',
@@ -33,6 +35,8 @@ router.get('/current', authenticateToken, async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     }
+
+    console.log('✅ Found student:', student.id);
 
     // Find current active attendance session
     const attendanceSession = await prisma.attendanceSession.findFirst({
@@ -48,9 +52,41 @@ router.get('/current', authenticateToken, async (req, res) => {
     });
 
     if (!attendanceSession) {
+      console.log('ℹ️ No active attendance session found for student:', student.id);
       return res.status(200).json({
         status: 'success',
         message: 'No active session',
+        data: {
+          currentSession: null,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    console.log('✅ Found active session:', {
+      attendanceSessionId: attendanceSession.id,
+      sessionId: attendanceSession.sessionId,
+      courseName: attendanceSession.session.course.name,
+      sessionStatus: attendanceSession.session.sessionStatus,
+    });
+
+    // CRITICAL: Double-check that parent Session is still ACTIVE
+    // This prevents students from seeing ended sessions
+    if (attendanceSession.session.sessionStatus !== 'ACTIVE') {
+      console.log('⚠️ AttendanceSession is ACTIVE but parent Session is', attendanceSession.session.sessionStatus);
+      
+      // Update this attendance session to ENDED if parent is completed
+      if (attendanceSession.session.sessionStatus === 'COMPLETED') {
+        await prisma.attendanceSession.update({
+          where: { id: attendanceSession.id },
+          data: { sessionStatus: 'ENDED' },
+        });
+        console.log('✅ Updated orphaned AttendanceSession to ENDED');
+      }
+
+      return res.status(200).json({
+        status: 'success',
+        message: 'Session has been ended',
         data: {
           currentSession: null,
         },
@@ -382,6 +418,159 @@ router.get('/course/:courseId/report', authenticateToken, async (req, res) => {
       status: 'error',
       message: 'Failed to fetch attendance report',
       error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * POST /api/attendance/join-session
+ * Manually join an active session (for testing without MQTT devices)
+ * Student joins a course's active session
+ */
+router.post('/join-session', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { courseId } = req.body;
+
+    if (!courseId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'courseId is required',
+        error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get student
+    const student = await prisma.student.findUnique({
+      where: { userId },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student profile not found',
+        error: 'STUDENT_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Verify student is enrolled in this course
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        studentId: student.id,
+        courseId,
+      },
+    });
+
+    if (!enrollment) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Not enrolled in this course',
+        error: 'NOT_ENROLLED',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Find active session for this course
+    const activeSession = await prisma.session.findFirst({
+      where: {
+        courseId,
+        sessionStatus: 'ACTIVE',
+      },
+      include: { course: true },
+    });
+
+    if (!activeSession) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'No active session in this course',
+        error: 'NO_ACTIVE_SESSION',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Get or create device for student (for testing)
+    let device = await prisma.device.findUnique({
+      where: { studentId: student.id },
+    });
+
+    if (!device) {
+      // Create a virtual device for testing
+      device = await prisma.device.create({
+        data: {
+          deviceId: `TEST_${student.id.substring(0, 8)}`,
+          studentId: student.id,
+          deviceStatus: 'ACTIVE',
+          batteryLevel: 100,
+        },
+      });
+      console.log('📱 Created test device for student:', device.deviceId);
+    }
+
+    // Check if student already has an active attendance in this session
+    const existingAttendance = await prisma.attendanceSession.findFirst({
+      where: {
+        sessionId: activeSession.id,
+        studentId: student.id,
+        sessionStatus: 'ACTIVE',
+      },
+    });
+
+    if (existingAttendance) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'Already joined this session',
+        data: {
+          attendanceSessionId: existingAttendance.id,
+          sessionId: activeSession.id,
+          courseId: activeSession.courseId,
+          courseName: activeSession.course.name,
+          sessionStartTime: activeSession.scheduledStartTime,
+          sessionStatus: activeSession.sessionStatus,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Create attendance session
+    const attendanceSession = await prisma.attendanceSession.create({
+      data: {
+        sessionId: activeSession.id,
+        studentId: student.id,
+        deviceId: device.id,
+        sessionStartTime: new Date(),
+        sessionStatus: 'ACTIVE',
+      },
+    });
+
+    console.log('✅ Student joined session:', {
+      studentId: student.id,
+      sessionId: activeSession.id,
+      deviceId: device.id,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Successfully joined session',
+      data: {
+        attendanceSessionId: attendanceSession.id,
+        sessionId: activeSession.id,
+        courseId: activeSession.courseId,
+        courseName: activeSession.course.name,
+        sessionStartTime: activeSession.scheduledStartTime,
+        sessionStatus: activeSession.sessionStatus,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /attendance/join-session:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to join session',
+      error: 'INTERNAL_ERROR',
+      errorDetails: error.message,
       timestamp: new Date().toISOString(),
     });
   }
