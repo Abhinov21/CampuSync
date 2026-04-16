@@ -50,7 +50,7 @@ router.get(
             courseId: session.courseId,
             courseName: session.course.name,
             professorName: session.course.professor.user.email.split('@')[0],
-            sessionStartTime: session.scheduledStartTime,
+            sessionStartTime: session.scheduledStartTime.toISOString(),
             enrolledStudents: totalEnrolled,
             presentCount,
             absentCount: totalEnrolled - presentCount,
@@ -110,7 +110,8 @@ router.get(
         studentId: log.device.student?.id || null,
         studentName: log.device.student?.user.email || 'N/A',
         confidence: (log.payload?.confidence || 0),
-        timestamp: log.createdAt,
+        timestamp: log.createdAt.toISOString(),
+        createdAt: log.createdAt.toISOString(),
         processed: log.status === 'processed',
       }));
 
@@ -401,6 +402,117 @@ router.get(
       res.status(500).json({
         status: 'error',
         message: 'Failed to fetch system status',
+        error: 'INTERNAL_ERROR',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/admin/analytics/overview
+ * Get analytics summary for admin dashboard
+ */
+router.get(
+  '/analytics/overview',
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const days = Math.min(parseInt(req.query.days) || 7,  90);
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+
+      // Get stats
+      const totalSessions = await prisma.session.count();
+      const activeSessions = await prisma.session.count({
+        where: { sessionStatus: 'ACTIVE' },
+      });
+
+      const completedSessions = await prisma.session.count({
+        where: { sessionStatus: 'COMPLETED', actualEndTime: { gte: startDate } },
+      });
+
+      const totalAttendanceRecords = await prisma.attendanceSession.count();
+      const avgDuration = await prisma.attendanceSession.aggregate({
+        _avg: { totalDurationSeconds: true },
+      });
+
+      const totalStudents = await prisma.student.count();
+      const totalDevices = await prisma.device.count();
+
+      res.status(200).json({
+        status: 'success',
+        stats: {
+          totalSessions,
+          activeSessions,
+          completedSessions,
+          totalAttendanceRecords,
+          averageDurationSeconds: Math.round(avgDuration._avg.totalDurationSeconds || 0),
+          totalStudents,
+          totalDevices,
+          dateRange: days,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error in GET /admin/analytics/overview:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch analytics',
+        error: 'INTERNAL_ERROR',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/admin/students
+ * Get list of all students
+ */
+router.get(
+  '/students',
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const students = await prisma.student.findMany({
+        include: {
+          user: true,
+          device: true,
+          enrollments: { include: { course: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const formatted = students.map(s => ({
+        id: s.id,
+        userId: s.userId,
+        name: s.name,
+        email: s.user.email,
+        rollNumber: s.rollNumber,
+        department: s.department,
+        year: s.year,
+        device: s.device ? {
+          id: s.device.id,
+          deviceId: s.device.deviceId,
+          status: s.device.deviceStatus,
+        } : null,
+        enrollmentCount: s.enrollments.length,
+      }));
+
+      res.status(200).json({
+        status: 'success',
+        data: formatted,
+        total: formatted.length,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error in GET /admin/students:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch students',
         error: 'INTERNAL_ERROR',
         timestamp: new Date().toISOString(),
       });

@@ -5,6 +5,18 @@ const { hashPassword, comparePassword, generateToken, verifyToken } = require('.
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Helper: Fetch user profile based on role
+const fetchUserProfile = async (userId, userRole) => {
+  if (userRole === 'STUDENT') {
+    return await prisma.student.findUnique({ where: { userId } });
+  } else if (userRole === 'PROFESSOR') {
+    return await prisma.professor.findUnique({ where: { userId } });
+  } else if (userRole === 'ADMIN') {
+    return await prisma.admin.findUnique({ where: { userId } });
+  }
+  return null;
+};
+
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -101,7 +113,7 @@ router.post('/register', async (req, res) => {
     }
 
     // Create user and profile in transaction
-    let user, profile;
+    let user;
 
     if (role === 'STUDENT') {
       user = await prisma.user.create({
@@ -112,7 +124,7 @@ router.post('/register', async (req, res) => {
         },
       });
 
-      profile = await prisma.student.create({
+      await prisma.student.create({
         data: {
           userId: user.id,
           name,
@@ -130,7 +142,7 @@ router.post('/register', async (req, res) => {
         },
       });
 
-      profile = await prisma.professor.create({
+      await prisma.professor.create({
         data: {
           userId: user.id,
           name,
@@ -147,7 +159,7 @@ router.post('/register', async (req, res) => {
         },
       });
 
-      profile = await prisma.admin.create({
+      await prisma.admin.create({
         data: {
           userId: user.id,
           name,
@@ -162,6 +174,8 @@ router.post('/register', async (req, res) => {
       role: user.role,
     });
 
+    const userProfile = await fetchUserProfile(user.id, user.role);
+
     return res.status(201).json({
       status: 'success',
       message: 'Registration successful',
@@ -171,7 +185,7 @@ router.post('/register', async (req, res) => {
           id: user.id,
           email: user.email,
           role: user.role,
-          profile: profile || null,
+          profile: userProfile || null,
         },
       },
       timestamp: new Date().toISOString(),
@@ -273,21 +287,8 @@ router.post('/login', async (req, res) => {
       role: user.role,
     });
 
-    // Fetch user profile based on role
-    let profile = null;
-    if (user.role === 'STUDENT') {
-      profile = await prisma.student.findUnique({
-        where: { userId: user.id },
-      });
-    } else if (user.role === 'PROFESSOR') {
-      profile = await prisma.professor.findUnique({
-        where: { userId: user.id },
-      });
-    } else if (user.role === 'ADMIN') {
-      profile = await prisma.admin.findUnique({
-        where: { userId: user.id },
-      });
-    }
+    // Fetch user profile
+    const userProfile = await fetchUserProfile(user.id, user.role);
 
     console.log(`✅ Login successful: ${email} (role: ${user.role})`);
 
@@ -300,7 +301,7 @@ router.post('/login', async (req, res) => {
           id: user.id,
           email: user.email,
           role: user.role,
-          profile: profile || null,
+          profile: userProfile || null,
         },
       },
       timestamp: new Date().toISOString(),
@@ -333,20 +334,7 @@ router.get('/me', authenticateToken, async (req, res) => {
     }
 
     // Fetch profile
-    let profile = null;
-    if (user.role === 'STUDENT') {
-      profile = await prisma.student.findUnique({
-        where: { userId: user.id },
-      });
-    } else if (user.role === 'PROFESSOR') {
-      profile = await prisma.professor.findUnique({
-        where: { userId: user.id },
-      });
-    } else if (user.role === 'ADMIN') {
-      profile = await prisma.admin.findUnique({
-        where: { userId: user.id },
-      });
-    }
+    const userProfile = await fetchUserProfile(user.id, user.role);
 
     return res.status(200).json({
       status: 'success',
@@ -356,7 +344,7 @@ router.get('/me', authenticateToken, async (req, res) => {
           id: user.id,
           email: user.email,
           role: user.role,
-          profile: profile || null,
+          profile: userProfile || null,
         },
       },
       timestamp: new Date().toISOString(),
@@ -366,6 +354,60 @@ router.get('/me', authenticateToken, async (req, res) => {
     return res.status(500).json({
       status: 'error',
       message: 'Failed to retrieve user',
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// POST /auth/logout - Logout user and close any active sessions
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // If professor, close any active sessions
+    if (userRole === 'PROFESSOR') {
+      const professor = await prisma.professor.findUnique({
+        where: { userId },
+        include: { courses: true },
+      });
+
+      if (professor) {
+        const courseIds = professor.courses.map(c => c.id);
+        
+        // Find and close active sessions
+        const activeSessions = await prisma.session.findMany({
+          where: {
+            courseId: { in: courseIds },
+            sessionStatus: 'ACTIVE',
+          },
+        });
+
+        for (const session of activeSessions) {
+          await prisma.session.update({
+            where: { id: session.id },
+            data: {
+              sessionStatus: 'COMPLETED',
+              actualEndTime: new Date(),
+            },
+          });
+
+          console.log(`🛑 Auto-closed session ${session.id} due to professor logout`);
+        }
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Logged out successfully',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('❌ Logout error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Logout failed',
       error: error.message,
       timestamp: new Date().toISOString(),
     });

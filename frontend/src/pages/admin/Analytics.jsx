@@ -37,8 +37,11 @@ export default function AdminAnalytics() {
       }
 
       const response = await api.get(`/api/admin/analytics/overview${queryParams}`);
+      // Updated to match new response format
       if (response.data.stats) {
         setStats(response.data.stats);
+      } else if (response.data.data) {
+        setStats(response.data.data);
       }
       setLoading(false);
     } catch (error) {

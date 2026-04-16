@@ -35,11 +35,19 @@ export default function AdminDevices() {
   const fetchStudents = async () => {
     try {
       const response = await api.get('/api/admin/students');
-      if (response.data.students) {
+      // Handle both old and new response formats
+      if (Array.isArray(response.data.data)) {
+        setStudents(response.data.data);
+      } else if (Array.isArray(response.data.students)) {
         setStudents(response.data.students);
+      } else if (Array.isArray(response.data)) {
+        setStudents(response.data);
+      } else {
+        setStudents([]);
       }
     } catch (error) {
       console.error('Failed to fetch students:', error);
+      setStudents([]);
     }
   };
 

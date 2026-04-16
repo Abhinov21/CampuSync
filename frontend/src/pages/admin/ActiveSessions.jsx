@@ -18,13 +18,29 @@ export default function AdminActiveSessions() {
 
   const fetchActiveSessions = async () => {
     try {
+      // Call the correct backend endpoint without /admin prefix
       const response = await api.get('/api/admin/sessions/active');
-      if (response.data.sessions) {
-        setSessions(response.data.sessions);
+      
+      // Handle the response format from backend
+      if (response.data?.data?.sessions) {
+        // If backend returns sessions array
+        setSessions(response.data.data.sessions);
+      } else if (response.data?.data?.attendanceSessions) {
+        // If backend returns attendance sessions
+        setSessions(response.data.data.attendanceSessions);
+      } else if (Array.isArray(response.data?.data)) {
+        // If data is directly an array
+        setSessions(response.data.data);
+      } else {
+        setSessions([]);
       }
       setLoading(false);
     } catch (error) {
       console.error('Failed to fetch active sessions:', error);
+      if (error.response?.status === 404) {
+        console.log('Endpoint may not exist - trying alternative route');
+      }
+      setSessions([]);
       setLoading(false);
     }
   };

@@ -209,31 +209,32 @@ async function main() {
   console.log('📱 Creating MQTT wristband devices...');
   const devices = [
     {
-      deviceId: 'WB_001',
+      // Real device from actual biometric hardware
+      deviceId: '00:70:07:25:B6:88',
       studentId: studentUsers[0].student.id,
       deviceStatus: 'ACTIVE',
       batteryLevel: 85,
     },
     {
-      deviceId: 'WB_002',
+      deviceId: '00:70:07:25:B6:89',
       studentId: studentUsers[1].student.id,
       deviceStatus: 'ACTIVE',
       batteryLevel: 78,
     },
     {
-      deviceId: 'WB_003',
+      deviceId: '00:70:07:25:B6:8A',
       studentId: studentUsers[2].student.id,
       deviceStatus: 'ACTIVE',
       batteryLevel: 92,
     },
     {
-      deviceId: 'WB_004',
+      deviceId: '00:70:07:25:B6:8B',
       studentId: studentUsers[3].student.id,
       deviceStatus: 'ACTIVE',
       batteryLevel: 65,
     },
     {
-      deviceId: 'WB_005',
+      deviceId: '00:70:07:25:B6:8C',
       studentId: studentUsers[4].student.id,
       deviceStatus: 'INACTIVE',
       batteryLevel: 15,
