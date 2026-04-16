@@ -102,7 +102,7 @@ export default function ProfessorLiveAttendance() {
 
           // Join WebSocket room for this session
           if (socket && socket.connected) {
-            socket.emit('join-session', session.id);
+            socket.emit('join-session', { sessionId: session.id });
             console.log(`📍 Joined session room: ${session.id}`);
           }
         } else {
