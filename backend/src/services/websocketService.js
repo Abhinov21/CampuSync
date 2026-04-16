@@ -4,6 +4,7 @@
  */
 
 const { Server } = require('socket.io');
+const { verifyToken } = require('../utils/auth');
 
 class WebSocketService {
   constructor(httpServer) {
@@ -17,7 +18,37 @@ class WebSocketService {
     this.connectedUsers = new Map(); // userId -> socketId mapping
     this.activeRooms = new Map(); // sessionId -> [socketIds]
 
+    this.setupAuthentication();
     this.setupHandlers();
+  }
+
+  /**
+   * Setup JWT authentication middleware for WebSocket
+   */
+  setupAuthentication() {
+    this.io.use((socket, next) => {
+      try {
+        const token = socket.handshake.auth.token;
+
+        if (!token) {
+          return next(new Error('Authentication token required'));
+        }
+
+        // Verify JWT token
+        const decoded = verifyToken(token);
+        socket.user = {
+          userId: decoded.userId,
+          email: decoded.email,
+          role: decoded.role
+        };
+
+        console.log(`🔐 User authenticated: ${decoded.email} (${decoded.role})`);
+        next();
+      } catch (error) {
+        console.error('❌ WebSocket authentication failed:', error.message);
+        next(new Error('Invalid or expired token'));
+      }
+    });
   }
 
   /**
@@ -25,29 +56,37 @@ class WebSocketService {
    */
   setupHandlers() {
     this.io.on('connection', (socket) => {
-      console.log(`👤 User connected: ${socket.id}`);
+      const userId = socket.user.userId;
+      const userEmail = socket.user.email;
+      const userRole = socket.user.role;
+
+      console.log(`👤 User ${userEmail} connected with socket: ${socket.id}`);
 
       /**
        * Client event: join-session
        * User joins a specific session room
        */
       socket.on('join-session', (data) => {
-        const { sessionId, userId } = data;
+        const { sessionId } = data;
+        // Use authenticated userId instead of trusting client
+        const authenticatedUserId = socket.user.userId;
         const roomName = `session-${sessionId}`;
 
         socket.join(roomName);
-        this.connectedUsers.set(userId, socket.id);
+        this.connectedUsers.set(authenticatedUserId, socket.id);
 
         if (!this.activeRooms.has(sessionId)) {
           this.activeRooms.set(sessionId, []);
         }
         this.activeRooms.get(sessionId).push(socket.id);
 
-        console.log(`📍 User ${userId} joined session room: ${roomName}`);
+        console.log(`📍 User ${userEmail} (${userRole}) joined session room: ${roomName}`);
 
         // Notify others in room
         socket.to(roomName).emit('user-joined', {
-          userId,
+          userId: authenticatedUserId,
+          email: userEmail,
+          role: userRole,
           socketId: socket.id,
           timestamp: new Date().toISOString()
         });
@@ -58,15 +97,20 @@ class WebSocketService {
        * Admin joins the system-wide admin room
        */
       socket.on('join-admin', (data) => {
-        const { userId } = data;
-        const roomName = 'admin-room';
+        if (userRole !== 'ADMIN') {
+          console.log(`⛔ Unauthorized: ${userEmail} tried to join admin room (role: ${userRole})`);
+          socket.emit('error', 'Only admins can join the admin room');
+          return;
+        }
 
+        const roomName = 'admin-room';
         socket.join(roomName);
-        console.log(`🛡️  Admin ${userId} joined admin room`);
+        console.log(`🛡️  Admin ${userEmail} joined admin room`);
 
         // Notify admin room that an admin is online
         socket.to(roomName).emit('admin-online', {
-          userId,
+          userId: userId,
+          email: userEmail,
           timestamp: new Date().toISOString()
         });
       });
@@ -88,15 +132,8 @@ class WebSocketService {
         }
 
         // Remove from connected users
-        for (const [userId, socketId] of this.connectedUsers) {
-          if (socketId === socket.id) {
-            this.connectedUsers.delete(userId);
-            console.log(`👤 User ${userId} disconnected`);
-            break;
-          }
-        }
-
-        console.log(`👤 Socket ${socket.id} disconnected`);
+        this.connectedUsers.delete(userId);
+        console.log(`👤 User ${userEmail} disconnected (socket: ${socket.id})`);
       });
     });
   }

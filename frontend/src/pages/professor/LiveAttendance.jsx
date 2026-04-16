@@ -32,8 +32,17 @@ export default function ProfessorLiveAttendance() {
   useEffect(() => {
     if (!user) return;
 
-    console.log('🔌 Connecting to WebSocket...');
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      console.error('❌ No auth token found');
+      return;
+    }
+
+    console.log('🔌 Connecting to WebSocket with authentication...');
     const newSocket = io(import.meta.env.VITE_API_URL, {
+      auth: {
+        token: token  // Send JWT token for authentication
+      },
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
