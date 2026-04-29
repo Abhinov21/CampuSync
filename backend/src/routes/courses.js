@@ -48,16 +48,51 @@ router.get('/', authenticateToken, async (req, res) => {
       // Calculate attendance for each course
       courses = await Promise.all(
         enrollments.map(async (enrollment) => {
-          const totalSessions = await prisma.session.count({
-            where: { courseId: enrollment.courseId },
-          });
-
-          const attendedSessions = await prisma.attendanceSession.count({
+          // Get attendance sessions with 65% threshold check
+          const attendanceRecords = await prisma.attendanceSession.findMany({
             where: {
               studentId: student.id,
               session: { courseId: enrollment.courseId },
-              sessionStatus: 'ENDED',
+              sessionStatus: { in: ['ACTIVE', 'ENDED'] },
             },
+            include: { session: true },
+          });
+
+          // Total sessions = count of attendance records for this student in this course
+          const totalSessions = attendanceRecords.length;
+
+          // Count attended sessions (apply 65% threshold)
+          let attendedSessions = 0;
+          attendanceRecords.forEach((att) => {
+            // Calculate session duration
+            let sessionDuration = 0;
+            if (att.session.scheduledStartTime && att.session.scheduledEndTime) {
+              try {
+                sessionDuration = Math.floor(
+                  (new Date(att.session.scheduledEndTime) - new Date(att.session.scheduledStartTime)) /
+                    1000
+                );
+              } catch (e) {
+                sessionDuration = 0;
+              }
+            }
+
+            // Calculate 65% threshold
+            const attendanceThreshold = sessionDuration > 0 ? Math.ceil(sessionDuration * 0.65) : 0;
+
+            // Determine if student attended using same logic as attendance endpoint
+            let isAttended = false;
+            if (att.sessionStatus === 'ACTIVE') {
+              // ACTIVE sessions: consider present if they joined (have a record)
+              isAttended = true;
+            } else if (att.sessionStatus === 'ENDED') {
+              // ENDED sessions: apply 65% threshold
+              isAttended = sessionDuration > 0 && att.totalDurationSeconds >= attendanceThreshold;
+            }
+
+            if (isAttended) {
+              attendedSessions++;
+            }
           });
 
           const attendancePercentage =

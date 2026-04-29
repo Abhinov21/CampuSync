@@ -1,16 +1,22 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function AttendanceTrendChart({ data = [] }) {
-  // Default mock data
-  const chartData = data.length > 0 ? data : [
-    { date: '2026-04-01', attendance: 92, students: 45 },
-    { date: '2026-04-02', attendance: 88, students: 43 },
-    { date: '2026-04-03', attendance: 95, students: 47 },
-    { date: '2026-04-04', attendance: 85, students: 42 },
-    { date: '2026-04-05', attendance: 91, students: 45 },
-    { date: '2026-04-08', attendance: 89, students: 44 },
-    { date: '2026-04-09', attendance: 94, students: 47 },
-  ];
+  // Use real data if provided, otherwise show empty state message
+  const chartData = data && data.length > 0 ? data : [];
+
+  if (chartData.length === 0) {
+    return (
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Attendance Trend Over Time</h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          <p>No attendance data available yet</p>
+        </div>
+        <p className="text-sm text-gray-600 mt-4 text-center">
+          Track class attendance percentage over multiple sessions
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white p-6 rounded-lg shadow">
@@ -19,7 +25,7 @@ export default function AttendanceTrendChart({ data = [] }) {
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis 
-            dataKey="date" 
+            dataKey="shortDate" 
             stroke="#6b7280"
             style={{ fontSize: '12px' }}
           />
@@ -34,7 +40,7 @@ export default function AttendanceTrendChart({ data = [] }) {
               border: '1px solid #e5e7eb',
               borderRadius: '0.5rem',
             }}
-            formatter={(value) => [`${value}%`, '']}
+            formatter={(value) => [`${value}%`, 'Attendance']}
             labelFormatter={(label) => `Date: ${label}`}
           />
           <Legend wrapperStyle={{ fontSize: '14px', marginTop: '1rem' }} />
@@ -50,7 +56,7 @@ export default function AttendanceTrendChart({ data = [] }) {
         </LineChart>
       </ResponsiveContainer>
       <p className="text-sm text-gray-600 mt-4 text-center">
-        Track class attendance percentage over multiple sessions
+        {chartData.length} sessions tracked
       </p>
     </div>
   );

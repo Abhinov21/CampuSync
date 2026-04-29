@@ -74,6 +74,9 @@ export default function ProfessorLiveAttendance() {
     };
   }, [user]);
 
+  // Track if we've already joined the session
+  const joinedSessionIdRef = useRef(null);
+
   // Fetch active session and join room
   useEffect(() => {
     if (!socket || !user) return;
@@ -87,30 +90,26 @@ export default function ProfessorLiveAttendance() {
       }
 
       try {
-        console.log('📊 Fetching active session for professor...');
-        
         const response = await api.get('/api/sessions/active');
-        console.log('Active session response:', response.data);
 
         if (response.data?.data) {
           const session = response.data.data;
-          console.log('✅ Active session found:', session);
           setCurrentSession(session);
           setSessionStatus('ACTIVE');
           setError(null); // Clear any previous errors on success
           hasShownErrorRef.current = false;
 
-          // Join WebSocket room for this session
-          if (socket && socket.connected) {
+          // Join WebSocket room for this session - ONLY if we haven't joined yet
+          if (socket && socket.connected && joinedSessionIdRef.current !== session.id) {
             socket.emit('join-session', { sessionId: session.id });
-            console.log(`📍 Joined session room: ${session.id}`);
+            joinedSessionIdRef.current = session.id;
           }
         } else {
-          console.log('ℹ️ No active session found');
           // Only set as NO_SESSION if we had no session before
           if (!currentSession) {
             setCurrentSession(null);
             setSessionStatus('NO_SESSION');
+            joinedSessionIdRef.current = null;
             if (!hasShownErrorRef.current) {
               setError('Failed to load session. No active session found.');
               hasShownErrorRef.current = true;
@@ -118,20 +117,14 @@ export default function ProfessorLiveAttendance() {
           }
         }
       } catch (err) {
-        console.error('❌ Error fetching session:', err.response?.status, err.response?.data || err.message);
-        
-        // Only show error if it's the initial load or if we don't have current session
+        // Silent error handling on interval refreshes
         if (isInitialLoad) {
           setError('Failed to load session. No active session found.');
           setSessionStatus('NO_SESSION');
+          joinedSessionIdRef.current = null;
           if (!hasShownErrorRef.current) {
             toast.error('No active session found. Start a session to begin.');
             hasShownErrorRef.current = true;
-          }
-        } else {
-          // On interval refreshes, just log silently if we have a current session
-          if (currentSession) {
-            console.log('ℹ️ Interval refresh encountered error, but session data still available');
           }
         }
       } finally {
@@ -143,10 +136,13 @@ export default function ProfessorLiveAttendance() {
 
     fetchSession();
 
-    // Set interval to refresh session data every 3 seconds to update counts
-    const interval = setInterval(fetchSession, 3000);
-    return () => clearInterval(interval);
-  }, [socket, user, currentSession]);
+    // Set interval to refresh session data every 5 seconds to update counts
+    const interval = setInterval(fetchSession, 5000);
+    return () => {
+      clearInterval(interval);
+      joinedSessionIdRef.current = null;
+    };
+  }, [socket, user]);
 
   // Listen for WebSocket events
   useEffect(() => {
@@ -155,7 +151,6 @@ export default function ProfessorLiveAttendance() {
     // Student joined
     socket.on('session-event', (data) => {
       if (data.type === 'student-joined') {
-        console.log('📢 Student joined:', data.data.student?.name || data.data.studentName);
         setStudents((prev) => {
           const exists = prev.some((s) => s.attendanceSessionId === data.data.attendanceSessionId);
           if (exists) {
@@ -168,7 +163,6 @@ export default function ProfessorLiveAttendance() {
           return [...prev, { ...data.data, lastUpdate: new Date() }];
         });
       } else if (data.type === 'duration-update') {
-        console.log('⏱️ Duration update for student:', data.data.studentId);
         setStudents((prev) =>
           prev.map((s) =>
             s.studentId === data.data.studentId
@@ -185,7 +179,6 @@ export default function ProfessorLiveAttendance() {
 
     // Session ended
     socket.on('session-ended', (data) => {
-      console.log('🔴 Session ended');
       setSessionStatus('ENDED');
     });
 

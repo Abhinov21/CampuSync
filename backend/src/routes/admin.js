@@ -264,41 +264,44 @@ router.get(
   async (req, res) => {
     try {
       const days = parseInt(req.query.days) || 999999; // Default to all time
-      const daysAgo = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      
+      // Calculate date safely - only if not "all time"
+      let whereClause = {};
+      if (days && days < 999999) {
+        const daysAgo = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        whereClause = { scheduledStartTime: { gte: daysAgo } };
+      }
 
       // Total sessions
       const totalSessions = await prisma.session.count({
-        where: {
-          createdAt: { gte: daysAgo },
-        },
+        where: whereClause,
       });
 
       // Total students
       const totalStudents = await prisma.student.count();
 
       // Total attendance records
+      const attendanceWhereClause = {};
+      if (days && days < 999999) {
+        const daysAgo = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        attendanceWhereClause.sessionStartTime = { gte: daysAgo };
+      }
       const totalAttendanceRecords = await prisma.attendanceSession.count({
-        where: {
-          createdAt: { gte: daysAgo },
-        },
+        where: attendanceWhereClause,
       });
 
       // Active courses
       const activeCourses = await prisma.course.count({
         where: {
           sessions: {
-            some: {
-              createdAt: { gte: daysAgo },
-            },
+            some: days && days < 999999 ? { scheduledStartTime: { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) } } : {},
           },
         },
       });
 
       // Average attendance percentage
       const attendanceSessions = await prisma.attendanceSession.findMany({
-        where: {
-          createdAt: { gte: daysAgo },
-        },
+        where: attendanceWhereClause,
       });
 
       const averageAttendance =
@@ -312,7 +315,7 @@ router.get(
 
       // Average duration
       const sessions = await prisma.session.findMany({
-        where: { createdAt: { gte: daysAgo } },
+        where: whereClause,
       });
 
       let averageDuration = 0;

@@ -172,15 +172,18 @@ class EventProcessor {
       });
 
       let attendanceSession;
-      if (existingRec) {
+      
+      // CRITICAL: Only update if ACTIVE, never reactivate ENDED sessions
+      if (existingRec && existingRec.sessionStatus === "ACTIVE") {
+        // Session already active for this student, update the start time
         attendanceSession = await prisma.attendanceSession.update({
           where: { id: existingRec.id },
           data: {
-            sessionStatus: "ACTIVE",
             sessionStartTime: new Date(),
           },
         });
-      } else {
+      } else if (!existingRec) {
+        // No existing record, create a new one
         attendanceSession = await prisma.attendanceSession.create({
           data: {
             studentId,
@@ -190,6 +193,20 @@ class EventProcessor {
             sessionStatus: "ACTIVE",
           },
         });
+      } else {
+        // existingRec exists but is ENDED - this is a REJOIN (student left and came back)
+        // Create a NEW attendance record for this rejoin
+        console.log(`🔄 Student ${studentId} rejoining session ${currentSession.id} (previous attendance ended)`);
+        attendanceSession = await prisma.attendanceSession.create({
+          data: {
+            studentId,
+            sessionId: currentSession.id,
+            deviceId: device.id,
+            sessionStartTime: new Date(),
+            sessionStatus: "ACTIVE",
+          },
+        });
+        console.log(`✅ New attendance record created for rejoin`);
       }
 
       // Create attendance record for AUTH event
@@ -651,6 +668,11 @@ class EventProcessor {
       if (!session) {
         console.log(`ℹ️  No active session found for student ${studentId}`);
       } else {
+        // SAFETY: Double-check session is still ACTIVE (prevent race condition)
+        if (session.sessionStatus !== 'ACTIVE') {
+          console.log(`⚠️  Session ${session.id} is no longer ACTIVE (status: ${session.sessionStatus})`);
+          return null;
+        }
         console.log(`✅ Found active session ${session.id} for student ${studentId}`);
       }
 

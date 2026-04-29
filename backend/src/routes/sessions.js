@@ -161,18 +161,58 @@ router.patch(
         },
       });
 
+      // CRITICAL: Update all AttendanceSession records to ENDED status
+      // This ensures they appear in student's attendance history
+      
+      // First, get all ACTIVE attendance sessions
+      const activeAttendanceSessions = await prisma.attendanceSession.findMany({
+        where: { 
+          sessionId,
+          sessionStatus: 'ACTIVE'
+        },
+      });
+
+      // Calculate duration for each student if not already set
+      for (const att of activeAttendanceSessions) {
+        let durationSeconds = att.totalDurationSeconds;
+        
+        // If duration wasn't set by MQTT, calculate it now
+        if (durationSeconds === 0 || !durationSeconds) {
+          durationSeconds = Math.floor((endTime - att.sessionStartTime) / 1000);
+        }
+
+        // Update with duration and ENDED status
+        await prisma.attendanceSession.update({
+          where: { id: att.id },
+          data: { 
+            sessionStatus: 'ENDED',
+            sessionEndTime: endTime,
+            totalDurationSeconds: durationSeconds
+          },
+        });
+      }
+
       // Get all attendance data for response
       const attendanceSessions = await prisma.attendanceSession.findMany({
         where: { sessionId },
         include: { student: { include: { user: true } } },
       });
 
+      // Calculate session duration for 65% threshold
+      const sessionDurationSeconds = endTime && session.scheduledStartTime
+        ? Math.floor((endTime - new Date(session.scheduledStartTime)) / 1000)
+        : 0;
+      const attendanceThreshold = sessionDurationSeconds > 0 ? Math.ceil(sessionDurationSeconds * 0.65) : 0;
+
       const studentAttendance = attendanceSessions.map((att) => ({
         studentId: att.student.id,
         name: att.student.user.email.split('@')[0],
-        attended: att.sessionStatus === 'ENDED' || att.sessionStatus === 'ACTIVE',
+        // Apply 65% threshold: present if totalDuration >= threshold
+        attended: sessionDurationSeconds > 0 && att.totalDurationSeconds >= attendanceThreshold,
         durationSeconds: att.totalDurationSeconds,
-        attendancePercentage: 100, // Will be calculated by frontend
+        attendancePercentage: sessionDurationSeconds > 0 && att.totalDurationSeconds > 0
+          ? Math.round((att.totalDurationSeconds / sessionDurationSeconds) * 100)
+          : 0,
       }));
 
       res.status(200).json({
@@ -355,12 +395,31 @@ router.get(
         include: { student: { include: { user: true } } },
       });
 
-      const attended = attendanceSessions.filter(
-        (s) => s.sessionStatus === 'ENDED' || s.sessionStatus === 'ACTIVE'
-      ).length;
+      // Calculate session duration using actualEndTime if available
+      const endTime = session.actualEndTime || session.scheduledEndTime;
+      const startTime = session.scheduledStartTime;
+      
+      const sessionDurationSeconds = endTime && startTime
+        ? Math.floor((new Date(endTime) - new Date(startTime)) / 1000)
+        : 0;
+
+      // Threshold: 65% of session duration
+      const attendanceThresholdSeconds = sessionDurationSeconds > 0 
+        ? Math.ceil(sessionDurationSeconds * 0.65)
+        : 0;
+
+      // Count as attended only if duration >= 65% of session
+      const attendanceStatusWithThreshold = attendanceSessions.map(att => ({
+        ...att,
+        isPresent: att.totalDurationSeconds > 0 && att.totalDurationSeconds >= attendanceThresholdSeconds
+      }));
+
+      const attended = attendanceStatusWithThreshold.filter(s => s.isPresent).length;
       const absent = totalEnrolled - attended;
 
-      const durations = attendanceSessions.map((s) => s.totalDurationSeconds);
+      // Calculate durations from students who met threshold (attended)
+      const attendedStudents = attendanceStatusWithThreshold.filter(s => s.isPresent);
+      const durations = attendedStudents.map((s) => s.totalDurationSeconds);
       const averageDuration =
         durations.length > 0
           ? Math.round(
@@ -372,12 +431,16 @@ router.get(
       const longestDuration =
         durations.length > 0 ? Math.max(...durations) : 0;
 
-      const students = attendanceSessions.map((att) => ({
+      const students = attendanceStatusWithThreshold.map((att) => ({
         studentId: att.student.id,
         name: att.student.user.email.split('@')[0],
         rollNumber: att.student.rollNumber,
-        attended: att.sessionStatus === 'ENDED' || att.sessionStatus === 'ACTIVE',
+        attended: att.isPresent,
         durationSeconds: att.totalDurationSeconds,
+        attendancePercentage: sessionDurationSeconds > 0 
+          ? Math.round((att.totalDurationSeconds / sessionDurationSeconds) * 100)
+          : 0,
+        isAboveThreshold: att.isPresent,
       }));
 
       const attendancePercentage =
@@ -598,6 +661,182 @@ router.get('/history', authenticateToken, authorizeRole(['PROFESSOR']), async (r
       message: 'Failed to fetch session history',
       error: 'INTERNAL_ERROR',
       timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * DEBUG ENDPOINT: GET /api/sessions/debug/db-state?courseId=xxx
+ * View current session states in database (for debugging stale sessions)
+ * DO NOT USE IN PRODUCTION
+ */
+router.get('/debug/db-state', authenticateToken, async (req, res) => {
+  try {
+    const { courseId } = req.query;
+
+    if (!courseId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'courseId query parameter is required',
+      });
+    }
+
+    // Get all sessions for this course
+    const sessions = await prisma.session.findMany({
+      where: { courseId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        course: { select: { name: true } },
+        attendanceSessions: {
+          select: {
+            id: true,
+            studentId: true,
+            sessionStatus: true,
+            sessionStartTime: true,
+            totalDurationSeconds: true,
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Database state for course',
+      data: {
+        courseId,
+        sessionsFound: sessions.length,
+        sessions: sessions.map((s) => ({
+          id: s.id,
+          courseName: s.course.name,
+          sessionStatus: s.sessionStatus,
+          scheduledStartTime: s.scheduledStartTime,
+          scheduledEndTime: s.scheduledEndTime,
+          actualEndTime: s.actualEndTime,
+          createdAt: s.createdAt,
+          attendanceCount: s.attendanceSessions.length,
+          attendanceSessions: s.attendanceSessions.map((a) => ({
+            id: a.id,
+            studentId: a.studentId,
+            status: a.sessionStatus,
+            startTime: a.sessionStartTime,
+            duration: a.totalDurationSeconds,
+          })),
+        })),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /debug/db-state:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch debug info',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * DEBUG ENDPOINT: POST /api/sessions/debug/cleanup
+ * DANGEROUS: Clears all ACTIVE sessions and attendance from database
+ * Only for testing/development - IRREVERSIBLE
+ */
+router.post('/debug/cleanup', authenticateToken, async (req, res) => {
+  try {
+    console.log('🧹 CLEANUP: Starting database cleanup...');
+
+    // Count before cleanup
+    const activeSessions = await prisma.session.count({
+      where: { sessionStatus: 'ACTIVE' },
+    });
+
+    const activeAttendance = await prisma.attendanceSession.count({
+      where: { sessionStatus: 'ACTIVE' },
+    });
+
+    console.log(`🧹 CLEANUP: Found ${activeSessions} ACTIVE sessions and ${activeAttendance} ACTIVE attendance records`);
+
+    // End all ACTIVE attendance sessions
+    const attendanceUpdated = await prisma.attendanceSession.updateMany({
+      where: { sessionStatus: 'ACTIVE' },
+      data: { sessionStatus: 'ENDED' },
+    });
+
+    // Complete all ACTIVE sessions
+    const sessionsUpdated = await prisma.session.updateMany({
+      where: { sessionStatus: 'ACTIVE' },
+      data: { 
+        sessionStatus: 'COMPLETED',
+        actualEndTime: new Date(),
+      },
+    });
+
+    console.log(`✅ CLEANUP: Updated ${sessionsUpdated.count} sessions and ${attendanceUpdated.count} attendance records`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Database cleanup completed',
+      data: {
+        sessionsCompleted: sessionsUpdated.count,
+        attendanceEnded: attendanceUpdated.count,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /debug/cleanup:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Cleanup failed',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * DEBUG ENDPOINT: GET /api/sessions/debug/cleanup-confirm
+ * Shows what WILL be cleaned up without making changes
+ */
+router.get('/debug/cleanup-confirm', authenticateToken, async (req, res) => {
+  try {
+    const activeSessions = await prisma.session.findMany({
+      where: { sessionStatus: 'ACTIVE' },
+      include: {
+        course: { select: { name: true } },
+        attendanceSessions: {
+          select: {
+            id: true,
+            studentId: true,
+            sessionStatus: true,
+          },
+        },
+      },
+    });
+
+    const activeAttendance = await prisma.attendanceSession.count({
+      where: { sessionStatus: 'ACTIVE' },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Preview of what will be cleaned up',
+      data: {
+        activeSessions: activeSessions.length,
+        activeAttendanceRecords: activeAttendance,
+        sessions: activeSessions.map((s) => ({
+          id: s.id,
+          course: s.course.name,
+          created: s.createdAt,
+          attendance: s.attendanceSessions.length,
+        })),
+      },
+      warning: 'POST to /debug/cleanup to apply changes (IRREVERSIBLE)',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /debug/cleanup-confirm:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch cleanup preview',
+      error: error.message,
     });
   }
 });

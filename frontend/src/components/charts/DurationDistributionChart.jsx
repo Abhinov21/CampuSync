@@ -1,22 +1,36 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function DurationDistributionChart({ data = [] }) {
-  // Default mock data - distribution of session durations
-  const chartData = data.length > 0 ? data : [
-    { duration: '0-10 min', sessions: 3, percentage: 8 },
-    { duration: '10-20 min', sessions: 5, percentage: 13 },
-    { duration: '20-30 min', sessions: 8, percentage: 21 },
-    { duration: '30-40 min', sessions: 12, percentage: 32 },
-    { duration: '40-50 min', sessions: 7, percentage: 18 },
-    { duration: '50-60 min', sessions: 2, percentage: 5 },
-    { duration: '60+ min', sessions: 1, percentage: 3 },
-  ];
+  const chartData = data && data.length > 0 ? data : [];
+
+  if (chartData.length === 0) {
+    return (
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Session Duration Distribution</h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          <p>No session duration data available</p>
+        </div>
+        <p className="text-sm text-gray-600 mt-4 text-center">
+          Distribution of session durations (data will appear after sessions complete)
+        </p>
+      </div>
+    );
+  }
+
+  // Calculate total sessions for percentage
+  const totalSessions = chartData.reduce((sum, item) => sum + (item.sessions || item.sessionCount || 0), 0);
+
+  // Transform data to include percentages
+  const dataWithPercentages = chartData.map(item => ({
+    ...item,
+    percentage: totalSessions > 0 ? Math.round(((item.sessions || item.sessionCount || 0) / totalSessions) * 100) : 0,
+  }));
 
   return (
     <div className="bg-white p-6 rounded-lg shadow">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">Session Duration Distribution</h3>
       <ResponsiveContainer width="100%" height={300}>
-        <BarChart data={chartData}>
+        <BarChart data={dataWithPercentages}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis 
             dataKey="duration" 
@@ -29,7 +43,7 @@ export default function DurationDistributionChart({ data = [] }) {
           <YAxis 
             stroke="#6b7280"
             style={{ fontSize: '12px' }}
-            label={{ value: 'Number of Sessions', angle: -90, position: 'insideLeft' }}
+            label={{ value: 'Sessions', angle: -90, position: 'insideLeft' }}
             yAxisId="left"
           />
           <YAxis 
@@ -45,7 +59,12 @@ export default function DurationDistributionChart({ data = [] }) {
               border: '1px solid #e5e7eb',
               borderRadius: '0.5rem',
             }}
-            formatter={(value) => value}
+            formatter={(value, name) => {
+              if (name === 'Percentage %') {
+                return [`${value}%`, name];
+              }
+              return [value, 'Sessions'];
+            }}
           />
           <Legend wrapperStyle={{ fontSize: '14px', marginTop: '1rem' }} />
           <Bar 
@@ -66,7 +85,7 @@ export default function DurationDistributionChart({ data = [] }) {
         </BarChart>
       </ResponsiveContainer>
       <p className="text-sm text-gray-600 mt-4 text-center">
-        How long do sessions typically last? Distribution of session durations
+        How long do sessions typically last? Distribution of session durations (Total: {totalSessions} sessions)
       </p>
     </div>
   );

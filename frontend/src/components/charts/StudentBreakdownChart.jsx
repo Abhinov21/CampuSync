@@ -1,15 +1,21 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-export default function StudentBreakdownChart({ data = [] }) {
-  // Default mock data - top students by attendance count
-  const chartData = data.length > 0 ? data : [
-    { student: 'Raj Kumar', sessions: 12, present: 11, absent: 1 },
-    { student: 'Priya Singh', sessions: 12, present: 12, absent: 0 },
-    { student: 'Amit Patel', sessions: 12, present: 9, absent: 3 },
-    { student: 'Neha Sharma', sessions: 12, present: 10, absent: 2 },
-    { student: 'Rohit Gupta', sessions: 12, present: 8, absent: 4 },
-    { student: 'Anjali Verma', sessions: 12, present: 11, absent: 1 },
-  ];
+export default function StudentBreakdownChart({ data = [], sessions = [] }) {
+  const chartData = data && data.length > 0 ? data : [];
+
+  if (chartData.length === 0) {
+    return (
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Student Attendance Breakdown</h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          <p>Student-level breakdown data not available</p>
+        </div>
+        <p className="text-sm text-gray-600 mt-4 text-center">
+          Individual student attendance records (requires detailed session attendance logs)
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white p-6 rounded-lg shadow">

@@ -19,7 +19,6 @@ const { authenticateToken } = require('../utils/auth');
 router.get('/current', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    console.log('📍 GET /api/attendance/current - Fetching for student:', userId);
 
     // Get student ID from User
     const student = await prisma.student.findUnique({
@@ -27,7 +26,6 @@ router.get('/current', authenticateToken, async (req, res) => {
     });
 
     if (!student) {
-      console.log('❌ Student profile not found for userId:', userId);
       return res.status(404).json({
         status: 'error',
         message: 'Student profile not found',
@@ -35,8 +33,6 @@ router.get('/current', authenticateToken, async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     }
-
-    console.log('✅ Found student:', student.id);
 
     // Find current active attendance session
     const attendanceSession = await prisma.attendanceSession.findFirst({
@@ -52,7 +48,7 @@ router.get('/current', authenticateToken, async (req, res) => {
     });
 
     if (!attendanceSession) {
-      console.log('ℹ️ No active attendance session found for student:', student.id);
+      console.log(`ℹ️  No ACTIVE attendance session found for student ${student.id}`);
       return res.status(200).json({
         status: 'success',
         message: 'No active session',
@@ -63,27 +59,15 @@ router.get('/current', authenticateToken, async (req, res) => {
       });
     }
 
-    console.log('✅ Found active session:', {
-      attendanceSessionId: attendanceSession.id,
-      sessionId: attendanceSession.sessionId,
-      courseName: attendanceSession.session.course.name,
-      sessionStatus: attendanceSession.session.sessionStatus,
-    });
+    // Log what we found
+    console.log(`🔍 Found AttendanceSession ${attendanceSession.id}, parent Session: ${attendanceSession.session.id}, Session Status: ${attendanceSession.session.sessionStatus}`);
 
     // CRITICAL: Double-check that parent Session is still ACTIVE
-    // This prevents students from seeing ended sessions
+    // If parent session is not ACTIVE, don't return the attendance session
     if (attendanceSession.session.sessionStatus !== 'ACTIVE') {
-      console.log('⚠️ AttendanceSession is ACTIVE but parent Session is', attendanceSession.session.sessionStatus);
-      
-      // Update this attendance session to ENDED if parent is completed
-      if (attendanceSession.session.sessionStatus === 'COMPLETED') {
-        await prisma.attendanceSession.update({
-          where: { id: attendanceSession.id },
-          data: { sessionStatus: 'ENDED' },
-        });
-        console.log('✅ Updated orphaned AttendanceSession to ENDED');
-      }
-
+      console.log(`⚠️  Attendance session's parent Session is ${attendanceSession.session.sessionStatus}, returning null`);
+      // DON'T update here - let the dedicated session-end endpoint handle status updates
+      // This is a READ-ONLY endpoint to prevent race conditions
       return res.status(200).json({
         status: 'success',
         message: 'Session has been ended',
@@ -93,6 +77,21 @@ router.get('/current', authenticateToken, async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     }
+
+    // SAFETY: Also verify the attendance session itself is ACTIVE (should always be true)
+    if (attendanceSession.sessionStatus !== 'ACTIVE') {
+      console.warn(`⚠️  Found ENDED AttendanceSession when expecting ACTIVE: ${attendanceSession.id}`);
+      return res.status(200).json({
+        status: 'success',
+        message: 'Attendance session has already ended',
+        data: {
+          currentSession: null,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    console.log(`✅ Returning ACTIVE session for student: course=${attendanceSession.session.course.name}`);
 
     // Format response
     const currentSession = {
@@ -135,6 +134,7 @@ router.get('/history', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
+    const courseId = req.query.courseId; // Optional course filter
 
     // Get student ID
     const student = await prisma.student.findUnique({
@@ -150,20 +150,25 @@ router.get('/history', authenticateToken, async (req, res) => {
       });
     }
 
+    // Build where clause
+    const whereClause = {
+      studentId: student.id,
+      sessionStatus: { in: ['ACTIVE', 'ENDED'] },
+    };
+
+    // Add course filter if provided
+    if (courseId) {
+      whereClause.session = { courseId };
+    }
+
     // Get total count
     const total = await prisma.attendanceSession.count({
-      where: {
-        studentId: student.id,
-        sessionStatus: { in: ['ACTIVE', 'ENDED'] },
-      },
+      where: whereClause,
     });
 
     // Fetch attendance sessions with pagination
     const sessions = await prisma.attendanceSession.findMany({
-      where: {
-        studentId: student.id,
-        sessionStatus: { in: ['ACTIVE', 'ENDED'] },
-      },
+      where: whereClause,
       include: {
         session: {
           include: { course: true },
@@ -189,6 +194,21 @@ router.get('/history', authenticateToken, async (req, res) => {
         }
       }
 
+      // Calculate 65% threshold
+      const attendanceThreshold = sessionDuration > 0 ? Math.ceil(sessionDuration * 0.65) : 0;
+
+      // Determine if student attended
+      // - For ACTIVE sessions: present if they have a record (totalDurationSeconds will be 0 until session ends)
+      // - For ENDED sessions: present if totalDurationSeconds >= 65% threshold
+      let isAttended = false;
+      if (att.sessionStatus === 'ACTIVE') {
+        // ACTIVE sessions: consider present if they joined (have a record)
+        isAttended = true;
+      } else if (att.sessionStatus === 'ENDED') {
+        // ENDED sessions: apply 65% threshold
+        isAttended = sessionDuration > 0 && att.totalDurationSeconds >= attendanceThreshold;
+      }
+
       const attendancePercentage =
         sessionDuration > 0 && att.totalDurationSeconds > 0
           ? Math.round(
@@ -201,9 +221,11 @@ router.get('/history', authenticateToken, async (req, res) => {
         courseId: att.session.courseId,
         courseName: att.session.course.name,
         sessionStartTime: att.session.scheduledStartTime,
+        date: att.session.scheduledStartTime,
         sessionEndTime: att.session.scheduledEndTime,
         totalDurationSeconds: att.totalDurationSeconds,
-        sessionStatus: att.sessionStatus,
+        attended: isAttended,
+        status: isAttended ? 'PRESENT' : 'ABSENT',
         attendancePercentage,
       };
     });
@@ -286,11 +308,60 @@ router.get('/course/:courseId', authenticateToken, async (req, res) => {
       where: { courseId },
     });
 
-    const attendedSessions = attendanceSessions.filter(
-      (s) => s.sessionStatus === 'ENDED' || s.sessionStatus === 'ACTIVE'
-    ).length;
+    // Apply 65% threshold to determine attendance
+    let attendedSessions = 0;
+    const formattedSessions = attendanceSessions.map((att) => {
+      // Calculate session duration
+      let sessionDuration = 0;
+      if (att.session.scheduledStartTime && att.session.scheduledEndTime) {
+        try {
+          sessionDuration = Math.floor(
+            (new Date(att.session.scheduledEndTime) - new Date(att.session.scheduledStartTime)) /
+              1000
+          );
+        } catch (e) {
+          sessionDuration = 0;
+        }
+      }
 
-    const attendancePercentage =
+      // Calculate 65% threshold
+      const attendanceThreshold = sessionDuration > 0 ? Math.ceil(sessionDuration * 0.65) : 0;
+
+      // Determine if student attended
+      // - For ACTIVE sessions: present if they have a record (totalDurationSeconds will be 0 until session ends)
+      // - For ENDED sessions: present if totalDurationSeconds >= 65% threshold
+      let isAttended = false;
+      if (att.sessionStatus === 'ACTIVE') {
+        // ACTIVE sessions: consider present if they joined (have a record)
+        isAttended = true;
+      } else if (att.sessionStatus === 'ENDED') {
+        // ENDED sessions: apply 65% threshold
+        isAttended = sessionDuration > 0 && att.totalDurationSeconds >= attendanceThreshold;
+      }
+
+      if (isAttended) {
+        attendedSessions++;
+      }
+
+      // Calculate attendance percentage for this session
+      const attendancePercentage =
+        sessionDuration > 0 && att.totalDurationSeconds > 0
+          ? Math.round(
+              (att.totalDurationSeconds / sessionDuration) * 100 * 100
+            ) / 100
+          : 0;
+
+      return {
+        id: att.id,
+        sessionDate: att.session.scheduledStartTime,
+        durationSeconds: att.totalDurationSeconds,
+        attended: isAttended,
+        status: isAttended ? 'PRESENT' : 'ABSENT',
+        attendancePercentage,
+      };
+    });
+
+    const courseAttendancePercentage =
       totalSessions > 0
         ? Math.round((attendedSessions / totalSessions) * 100 * 100) / 100
         : 0;
@@ -302,13 +373,8 @@ router.get('/course/:courseId', authenticateToken, async (req, res) => {
         courseId,
         totalSessions,
         attendedSessions,
-        attendancePercentage,
-        sessions: attendanceSessions.map((att) => ({
-          id: att.id,
-          sessionDate: att.session.scheduledStartTime,
-          durationSeconds: att.totalDurationSeconds,
-          status: att.sessionStatus,
-        })),
+        attendancePercentage: courseAttendancePercentage,
+        sessions: formattedSessions,
       },
       timestamp: new Date().toISOString(),
     });
@@ -374,16 +440,44 @@ router.get('/course/:courseId/report', authenticateToken, async (req, res) => {
     const sessionStats = [];
 
     for (const session of sessions) {
+      // Calculate session duration using actualEndTime if available, otherwise scheduledEndTime
+      const endTime = session.actualEndTime || session.scheduledEndTime;
+      const startTime = session.scheduledStartTime;
+      
+      const sessionDurationSeconds = endTime && startTime
+        ? Math.floor((new Date(endTime) - new Date(startTime)) / 1000)
+        : 0;
+
+      // Threshold: 65% of session duration
+      const attendanceThresholdSeconds = sessionDurationSeconds > 0 
+        ? Math.ceil(sessionDurationSeconds * 0.65)
+        : 0;
+
+      // Count students with duration >= 65% of session duration
       const attendanceCount = session.attendanceSessions.filter(
-        (a) => a.sessionStatus === 'PRESENT' || a.sessionStatus === 'CHECKED_IN'
+        (a) => a.totalDurationSeconds > 0 && a.totalDurationSeconds >= attendanceThresholdSeconds
       ).length;
+      
+      // Calculate average duration for ALL students with presence (not just those meeting threshold)
+      const attendedSessions = session.attendanceSessions.filter(
+        (a) => a.totalDurationSeconds > 0
+      );
+      const avgDuration = attendedSessions.length > 0
+        ? Math.round(
+            attendedSessions.reduce((sum, a) => sum + a.totalDurationSeconds, 0) /
+            attendedSessions.length
+          )
+        : 0;
       
       sessionStats.push({
         id: session.id,
+        scheduledStartTime: session.scheduledStartTime,
         scheduledDate: session.scheduledStartTime,
+        attendanceCount,
         totalEnrolled: session.attendanceSessions.length,
         attended: attendanceCount,
         absent: session.attendanceSessions.length - attendanceCount,
+        avgDuration,
         attendanceRate:
           session.attendanceSessions.length > 0
             ? ((attendanceCount / session.attendanceSessions.length) * 100).toFixed(2)
@@ -483,6 +577,7 @@ router.post('/join-session', authenticateToken, async (req, res) => {
     });
 
     if (!activeSession) {
+      console.log(`📭 No ACTIVE session found for course ${courseId}`);
       return res.status(404).json({
         status: 'error',
         message: 'No active session in this course',
@@ -490,6 +585,8 @@ router.post('/join-session', authenticateToken, async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     }
+
+    console.log(`🔍 Found ACTIVE Session ${activeSession.id} for course ${activeSession.course.name} (status=${activeSession.sessionStatus})`);
 
     // Get or create device for student (for testing)
     let device = await prisma.device.findUnique({

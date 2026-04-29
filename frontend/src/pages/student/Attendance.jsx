@@ -192,7 +192,8 @@ export default function StudentAttendance() {
                             </p>
                             <p className="text-sm font-mono text-gray-800">
                               {Math.floor(record.durationSeconds / 3600)}h{' '}
-                              {Math.floor((record.durationSeconds % 3600) / 60)}m
+                              {Math.floor((record.durationSeconds % 3600) / 60)}m{' '}
+                              {Math.floor(record.durationSeconds % 60)}s
                             </p>
                           </div>
                         )}

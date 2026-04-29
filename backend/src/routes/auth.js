@@ -1,61 +1,152 @@
+/**
+ * Authentication Routes
+ * POST /auth/login - User login
+ * POST /auth/register - User registration
+ */
+
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
-const { hashPassword, comparePassword, generateToken, verifyToken } = require('../utils/auth');
-
 const router = express.Router();
+const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { hashPassword, comparePassword, generateToken } = require('../utils/auth');
 
-// Helper: Fetch user profile based on role
-const fetchUserProfile = async (userId, userRole) => {
-  if (userRole === 'STUDENT') {
-    return await prisma.student.findUnique({ where: { userId } });
-  } else if (userRole === 'PROFESSOR') {
-    return await prisma.professor.findUnique({ where: { userId } });
-  } else if (userRole === 'ADMIN') {
-    return await prisma.admin.findUnique({ where: { userId } });
-  }
-  return null;
-};
-
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) {
-    return res.status(401).json({
-      status: 'error',
-      message: 'No token provided',
-      error: 'MISSING_TOKEN',
-      timestamp: new Date().toISOString(),
-    });
-  }
-
+/**
+ * POST /auth/login
+ * Login user with email and password
+ */
+router.post('/login', async (req, res) => {
   try {
-    const decoded = verifyToken(token);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(403).json({
-      status: 'error',
-      message: 'Invalid or expired token',
-      error: 'INVALID_TOKEN',
-      timestamp: new Date().toISOString(),
-    });
-  }
-};
+    const { email, password } = req.body;
 
-// POST /auth/register - Create new user account
-router.post('/register', async (req, res) => {
-  try {
-    const { email, password, role, name, rollNumber, employeeId, department, year } = req.body;
-
-    // Validate required fields
-    if (!email || !password || !role || !name) {
+    // Validate input
+    if (!email || !password) {
       return res.status(400).json({
         status: 'error',
-        message: 'Missing required fields: email, password, role, name',
+        message: 'Email and password are required',
         error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Find user by email
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        student: true,
+        professor: true,
+        admin: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Invalid email or password',
+        error: 'INVALID_CREDENTIALS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Compare password
+    const isPasswordValid = await comparePassword(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Invalid email or password',
+        error: 'INVALID_CREDENTIALS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Generate token
+    const token = generateToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Build user response based on role
+    let userResponse = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    };
+
+    if (user.student) {
+      userResponse = {
+        ...userResponse,
+        name: user.student.name,
+        rollNumber: user.student.rollNumber,
+        department: user.student.department,
+        year: user.student.year,
+      };
+    } else if (user.professor) {
+      userResponse = {
+        ...userResponse,
+        name: user.professor.name,
+        employeeId: user.professor.employeeId,
+        department: user.professor.department,
+      };
+    } else if (user.admin) {
+      userResponse = {
+        ...userResponse,
+        name: user.admin.name,
+      };
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Login successful',
+      data: {
+        token,
+        user: userResponse,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in POST /auth/login:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Login failed',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
+ * POST /auth/register
+ * Register new user (student, professor, or admin)
+ */
+router.post('/register', async (req, res) => {
+  try {
+    const {
+      email,
+      password,
+      name,
+      role,
+      department,
+      rollNumber,
+      year,
+      employeeId,
+    } = req.body;
+
+    // Validate input
+    if (!email || !password || !name || !role || !department) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email, password, name, role, and department are required',
+        error: 'MISSING_FIELDS',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Validate role
+    if (!['STUDENT', 'PROFESSOR', 'ADMIN'].includes(role)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid role. Must be STUDENT, PROFESSOR, or ADMIN',
+        error: 'INVALID_ROLE',
         timestamp: new Date().toISOString(),
       });
     }
@@ -69,27 +160,55 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({
         status: 'error',
         message: 'User with this email already exists',
-        error: 'DUPLICATE_EMAIL',
+        error: 'USER_EXISTS',
         timestamp: new Date().toISOString(),
       });
     }
 
     // Role-specific validation
     if (role === 'STUDENT') {
-      if (!rollNumber || !department || !year) {
+      if (!rollNumber || !year) {
         return res.status(400).json({
           status: 'error',
-          message: 'Students require: rollNumber, department, year',
-          error: 'MISSING_STUDENT_FIELDS',
+          message: 'Roll number and year are required for students',
+          error: 'MISSING_FIELDS',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Check if roll number already exists
+      const existingStudent = await prisma.student.findUnique({
+        where: { rollNumber },
+      });
+
+      if (existingStudent) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Roll number already registered',
+          error: 'ROLL_NUMBER_EXISTS',
           timestamp: new Date().toISOString(),
         });
       }
     } else if (role === 'PROFESSOR') {
-      if (!employeeId || !department) {
+      if (!employeeId) {
         return res.status(400).json({
           status: 'error',
-          message: 'Professors require: employeeId, department',
-          error: 'MISSING_PROFESSOR_FIELDS',
+          message: 'Employee ID is required for professors',
+          error: 'MISSING_FIELDS',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Check if employee ID already exists
+      const existingProfessor = await prisma.professor.findUnique({
+        where: { employeeId },
+      });
+
+      if (existingProfessor) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Employee ID already registered',
+          error: 'EMPLOYEE_ID_EXISTS',
           timestamp: new Date().toISOString(),
         });
       }
@@ -98,317 +217,114 @@ router.post('/register', async (req, res) => {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Convert year to integer for STUDENT role
-    let yearInt = null;
-    if (role === 'STUDENT' && year) {
-      yearInt = parseInt(year, 10);
-      if (isNaN(yearInt)) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Invalid year value. Must be a number.',
-          error: 'INVALID_YEAR',
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    // Create user and profile in transaction
-    let user;
+    // Create user and role-specific profile in transaction
+    let userResponse;
 
     if (role === 'STUDENT') {
-      user = await prisma.user.create({
+      const result = await prisma.user.create({
         data: {
           email,
           password: hashedPassword,
-          role: 'STUDENT',
+          role,
+          student: {
+            create: {
+              name,
+              rollNumber,
+              department,
+              year: parseInt(year),
+            },
+          },
+        },
+        include: {
+          student: true,
         },
       });
 
-      await prisma.student.create({
-        data: {
-          userId: user.id,
-          name,
-          rollNumber,
-          department,
-          year: yearInt,
-        },
-      });
+      userResponse = {
+        id: result.id,
+        email: result.email,
+        role: result.role,
+        name: result.student.name,
+        rollNumber: result.student.rollNumber,
+        department: result.student.department,
+        year: result.student.year,
+      };
     } else if (role === 'PROFESSOR') {
-      user = await prisma.user.create({
+      const result = await prisma.user.create({
         data: {
           email,
           password: hashedPassword,
-          role: 'PROFESSOR',
+          role,
+          professor: {
+            create: {
+              name,
+              employeeId,
+              department,
+            },
+          },
+        },
+        include: {
+          professor: true,
         },
       });
 
-      await prisma.professor.create({
-        data: {
-          userId: user.id,
-          name,
-          employeeId,
-          department,
-        },
-      });
+      userResponse = {
+        id: result.id,
+        email: result.email,
+        role: result.role,
+        name: result.professor.name,
+        employeeId: result.professor.employeeId,
+        department: result.professor.department,
+      };
     } else if (role === 'ADMIN') {
-      user = await prisma.user.create({
+      const result = await prisma.user.create({
         data: {
           email,
           password: hashedPassword,
-          role: 'ADMIN',
+          role,
+          admin: {
+            create: {
+              name,
+            },
+          },
+        },
+        include: {
+          admin: true,
         },
       });
 
-      await prisma.admin.create({
-        data: {
-          userId: user.id,
-          name,
-        },
-      });
-    }
-
-    // Generate JWT token
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    const userProfile = await fetchUserProfile(user.id, user.role);
-
-    return res.status(201).json({
-      status: 'success',
-      message: 'Registration successful',
-      data: {
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          profile: userProfile || null,
-        },
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('❌ Registration error:', error);
-    return res.status(500).json({
-      status: 'error',
-      message: 'Registration failed',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-// POST /auth/login - Authenticate user
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Email and password required',
-        error: 'MISSING_CREDENTIALS',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        status: 'error',
-        message: 'Invalid email or password',
-        error: 'INVALID_CREDENTIALS',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Verify password
-    const passwordMatch = await comparePassword(password, user.password);
-    if (!passwordMatch) {
-      return res.status(401).json({
-        status: 'error',
-        message: 'Invalid email or password',
-        error: 'INVALID_CREDENTIALS',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Validate that the user's role has the appropriate profile
-    let roleValid = true;
-    let roleIssue = null;
-    
-    if (user.role === 'STUDENT') {
-      const student = await prisma.student.findUnique({
-        where: { userId: user.id },
-      });
-      if (!student) {
-        roleValid = false;
-        roleIssue = 'Account has STUDENT role but no student profile exists';
-      }
-    } else if (user.role === 'PROFESSOR') {
-      const professor = await prisma.professor.findUnique({
-        where: { userId: user.id },
-      });
-      if (!professor) {
-        roleValid = false;
-        roleIssue = 'Account has PROFESSOR role but no professor profile exists';
-      }
-    } else if (user.role === 'ADMIN') {
-      const admin = await prisma.admin.findUnique({
-        where: { userId: user.id },
-      });
-      if (!admin) {
-        roleValid = false;
-        roleIssue = 'Account has ADMIN role but no admin profile exists';
-      }
-    }
-
-    if (!roleValid) {
-      console.error('❌ ROLE VALIDATION FAILED:', roleIssue);
-      return res.status(500).json({
-        status: 'error',
-        message: 'Account configuration error: ' + roleIssue,
-        error: 'ROLE_CONFIGURATION_ERROR',
-        timestamp: new Date().toISOString(),
-      });
+      userResponse = {
+        id: result.id,
+        email: result.email,
+        role: result.role,
+        name: result.admin.name,
+      };
     }
 
     // Generate token
     const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
+      userId: userResponse.id,
+      email: userResponse.email,
+      role: userResponse.role,
     });
 
-    // Fetch user profile
-    const userProfile = await fetchUserProfile(user.id, user.role);
+    console.log(`✅ New user registered: ${email} (${role})`);
 
-    console.log(`✅ Login successful: ${email} (role: ${user.role})`);
-
-    return res.status(200).json({
+    res.status(201).json({
       status: 'success',
-      message: 'Login successful',
+      message: 'Registration successful',
       data: {
         token,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          profile: userProfile || null,
-        },
+        user: userResponse,
       },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('❌ Login error:', error);
-    return res.status(500).json({
-      status: 'error',
-      message: 'Login failed',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-// GET /auth/me - Get current user info (requires token)
-router.get('/me', authenticateToken, async (req, res) => {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found',
-        error: 'USER_NOT_FOUND',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Fetch profile
-    const userProfile = await fetchUserProfile(user.id, user.role);
-
-    return res.status(200).json({
-      status: 'success',
-      message: 'User retrieved',
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          profile: userProfile || null,
-        },
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('❌ Get user error:', error);
-    return res.status(500).json({
-      status: 'error',
-      message: 'Failed to retrieve user',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-// POST /auth/logout - Logout user and close any active sessions
-router.post('/logout', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const userRole = req.user.role;
-
-    // If professor, close any active sessions
-    if (userRole === 'PROFESSOR') {
-      const professor = await prisma.professor.findUnique({
-        where: { userId },
-        include: { courses: true },
-      });
-
-      if (professor) {
-        const courseIds = professor.courses.map(c => c.id);
-        
-        // Find and close active sessions
-        const activeSessions = await prisma.session.findMany({
-          where: {
-            courseId: { in: courseIds },
-            sessionStatus: 'ACTIVE',
-          },
-        });
-
-        for (const session of activeSessions) {
-          await prisma.session.update({
-            where: { id: session.id },
-            data: {
-              sessionStatus: 'COMPLETED',
-              actualEndTime: new Date(),
-            },
-          });
-
-          console.log(`🛑 Auto-closed session ${session.id} due to professor logout`);
-        }
-      }
-    }
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Logged out successfully',
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('❌ Logout error:', error);
+    console.error('Error in POST /auth/register:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Logout failed',
-      error: error.message,
+      message: 'Registration failed',
+      error: 'INTERNAL_ERROR',
       timestamp: new Date().toISOString(),
     });
   }

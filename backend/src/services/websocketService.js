@@ -42,10 +42,9 @@ class WebSocketService {
           role: decoded.role
         };
 
-        console.log(`🔐 User authenticated: ${decoded.email} (${decoded.role})`);
+
         next();
       } catch (error) {
-        console.error('❌ WebSocket authentication failed:', error.message);
         next(new Error('Invalid or expired token'));
       }
     });
@@ -60,7 +59,7 @@ class WebSocketService {
       const userEmail = socket.user.email;
       const userRole = socket.user.role;
 
-      console.log(`👤 User ${userEmail} connected with socket: ${socket.id}`);
+      // Silent connection - reduced logging to prevent spam
 
       /**
        * Client event: join-session
@@ -72,24 +71,25 @@ class WebSocketService {
         const authenticatedUserId = socket.user.userId;
         const roomName = `session-${sessionId}`;
 
-        socket.join(roomName);
-        this.connectedUsers.set(authenticatedUserId, socket.id);
+        // Check if already in room to prevent duplicate joins
+        if (!socket.rooms.has(roomName)) {
+          socket.join(roomName);
+          this.connectedUsers.set(authenticatedUserId, socket.id);
 
-        if (!this.activeRooms.has(sessionId)) {
-          this.activeRooms.set(sessionId, []);
+          if (!this.activeRooms.has(sessionId)) {
+            this.activeRooms.set(sessionId, []);
+          }
+          this.activeRooms.get(sessionId).push(socket.id);
+
+          // Notify others in room
+          socket.to(roomName).emit('user-joined', {
+            userId: authenticatedUserId,
+            email: userEmail,
+            role: userRole,
+            socketId: socket.id,
+            timestamp: new Date().toISOString()
+          });
         }
-        this.activeRooms.get(sessionId).push(socket.id);
-
-        console.log(`📍 User ${userEmail} (${userRole}) joined session room: ${roomName}`);
-
-        // Notify others in room
-        socket.to(roomName).emit('user-joined', {
-          userId: authenticatedUserId,
-          email: userEmail,
-          role: userRole,
-          socketId: socket.id,
-          timestamp: new Date().toISOString()
-        });
       });
 
       /**

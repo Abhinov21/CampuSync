@@ -8,6 +8,7 @@ import StudentBreakdownChart from '../../components/charts/StudentBreakdownChart
 import DurationDistributionChart from '../../components/charts/DurationDistributionChart';
 import PresenceTimeline from '../../components/charts/PresenceTimeline';
 import AttendanceDonutChart from '../../components/charts/AttendanceDonutChart';
+import SessionDetailsModal from '../../components/SessionDetailsModal';
 
 export default function ProfessorAnalytics() {
   const { user, logout } = useAuth();
@@ -23,10 +24,20 @@ export default function ProfessorAnalytics() {
     totalStudents: 0,
     avgDuration: 0,
   });
-
-  // Fetch course data and sessions
+  const [chartData, setChartData] = useState({
+    trendData: [],
+    studentBreakdownData: [],
+    durationData: [],
+    presenceTimelineData: [],
+    donutData: [],
+  });
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [sessionDetailsOpen, setSessionDetailsOpen] = useState(false);
   useEffect(() => {
     fetchData();
+    // Auto-refresh every 30 seconds for real-time updates
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
   }, [courseId, user, dateRange]);
 
   const fetchData = async () => {
@@ -51,7 +62,6 @@ export default function ProfessorAnalytics() {
 
       // Fetch attendance report
       const reportResponse = await api.get(`/api/attendance/course/${courseId}/report${queryParams}`);
-      console.log('📊 Report response:', reportResponse.data);
       
       if (reportResponse.data?.data) {
         const data = reportResponse.data.data;
@@ -60,26 +70,31 @@ export default function ProfessorAnalytics() {
           : (data.sessions ? [data.sessions] : []);
         setSessions(sessionData);
         
-        // Calculate statistics
-        const totalSessions = data.sessions?.length || 0;
-        const totalAttendance = data.sessions?.reduce(
+        // Calculate statistics - CORRECTED
+        const totalSessions = data.totalSessions || 0;
+        const totalAttendance = sessionData.reduce(
           (sum, s) => sum + (s.attendanceCount || 0),
           0
-        ) || 0;
+        );
         const avgAttendance = totalSessions > 0 ? Math.round(totalAttendance / totalSessions) : 0;
         const totalStudents = data.totalStudents || 0;
-        const totalDuration = data.sessions?.reduce(
+        
+        // FIXED: avgDuration is already in seconds, don't multiply by 60
+        const totalDuration = sessionData.reduce(
           (sum, s) => sum + (s.avgDuration || 0),
           0
-        ) || 0;
+        );
         const avgDuration = totalSessions > 0 ? Math.round(totalDuration / totalSessions) : 0;
 
         setStats({
           totalSessions,
           avgAttendance,
           totalStudents,
-          avgDuration,
+          avgDuration, // Now in seconds
         });
+
+        // Prepare chart data from real data
+        prepareChartData(sessionData, totalStudents);
       }
     } catch (err) {
       console.error('❌ Error fetching analytics:', err);
@@ -90,11 +105,96 @@ export default function ProfessorAnalytics() {
     }
   };
 
-  // Format duration in minutes
+  // Prepare data for all charts
+  const prepareChartData = (sessions, totalStudents) => {
+    // Attendance Trend Chart data
+    const trendData = sessions
+      .filter(s => s.scheduledStartTime)
+      .map((s) => ({
+        date: new Date(s.scheduledStartTime).toLocaleDateString(),
+        attendance: s.attendanceCount ? Math.round((s.attendanceCount / totalStudents) * 100) : 0,
+        students: s.attendanceCount || 0,
+        shortDate: new Date(s.scheduledStartTime).toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      }))
+      .slice(-30); // Last 30 sessions
+
+    // Duration Distribution Chart data - bin durations into ranges
+    const durationBuckets = {};
+    sessions.forEach((s) => {
+      if (s.avgDuration > 0) {
+        const minutes = Math.round(s.avgDuration / 60);
+        const bucketKey = minutes <= 15 ? '0-15m' : 
+                         minutes <= 30 ? '15-30m' : 
+                         minutes <= 45 ? '30-45m' : 
+                         minutes <= 60 ? '45-60m' : '60m+';
+        
+        if (!durationBuckets[bucketKey]) {
+          durationBuckets[bucketKey] = { duration: bucketKey, sessions: 0, sessionCount: 0 };
+        }
+        durationBuckets[bucketKey].sessions += 1;
+        durationBuckets[bucketKey].sessionCount += 1;
+      }
+    });
+
+    const durationData = Object.values(durationBuckets);
+
+    // Student Breakdown data - aggregate attendance across all sessions
+    const studentMap = {};
+    sessions.forEach((session) => {
+      const totalEnrolled = session.totalEnrolled || 0;
+      const attended = session.attendanceCount || 0;
+      
+      // Create a unique identifier for aggregating (using session index for now)
+      // In a real scenario, this would be per-student data
+      const label = `Session ${sessions.indexOf(session) + 1}`;
+      studentMap[label] = {
+        student: label,
+        present: attended,
+        absent: Math.max(0, totalEnrolled - attended),
+      };
+    });
+
+    const studentBreakdownData = Object.values(studentMap).slice(-10); // Last 10 sessions
+    
+    // Presence Timeline data - show attendance status across sessions
+    const presenceTimelineData = sessions
+      .slice(-12) // Last 12 sessions
+      .map((session, idx) => ({
+        time: idx + 1,
+        student: idx + 1,  // Use numeric index for Y-axis
+        studentLabel: `Session ${idx + 1}`,
+        status: session.attendanceCount > 0 ? 1 : 0, // 1 for present, 0 for absent
+        sessionDate: session.scheduledStartTime,
+        attendance: session.attendanceCount,
+        total: session.totalEnrolled,
+      }));
+    
+    // Donut Chart data (attendance vs absence)
+    const presentCount = sessions.reduce((sum, s) => sum + (s.attendanceCount || 0), 0);
+    const totalEnrollments = sessions.reduce((sum, s) => sum + (s.totalEnrolled || 0), 0);
+    const absentCount = Math.max(0, totalEnrollments - presentCount);
+
+    const donutData = [
+      { name: 'Present', value: presentCount, fill: '#10b981' },
+      { name: 'Absent', value: absentCount, fill: '#ef4444' },
+    ];
+
+    setChartData({
+      trendData: trendData.length > 0 ? trendData : [],
+      studentBreakdownData: studentBreakdownData.length > 0 ? studentBreakdownData : [],
+      durationData: durationData.length > 0 ? durationData : [],
+      presenceTimelineData: presenceTimelineData.length > 0 ? presenceTimelineData : [],
+      donutData,
+    });
+  };
+
+  // Format duration in seconds to readable format
   const formatDuration = (seconds) => {
-    if (!seconds) return '0m';
+    if (!seconds || seconds === 0) return '0s';
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
+    if (minutes === 0) return `${secs}s`;
+    if (secs === 0) return `${minutes}m`;
     return `${minutes}m ${secs}s`;
   };
 
@@ -121,7 +221,7 @@ export default function ProfessorAnalytics() {
       const dateTime = session.scheduledStartTime
         ? new Date(session.scheduledStartTime).toLocaleString()
         : 'N/A';
-      const duration = formatDuration(session.avgDuration * 60 || 0);
+      const duration = formatDuration(session.avgDuration || 0);
       const attendance = `${session.attendanceCount || 0}/${stats.totalStudents}`;
       
       csvContent += `"${dateTime}","${duration}","${attendance}",${attendanceRate}\n`;
@@ -134,7 +234,7 @@ export default function ProfessorAnalytics() {
     csvContent += `Total Sessions,${stats.totalSessions}\n`;
     csvContent += `Average Attendance,${stats.avgAttendance}\n`;
     csvContent += `Total Students,${stats.totalStudents}\n`;
-    csvContent += `Average Duration,${formatDuration(stats.avgDuration * 60)}\n`;
+    csvContent += `Average Duration,${formatDuration(stats.avgDuration)}\n`;
     csvContent += `Exported On,${new Date().toLocaleString()}\n`;
 
     // Create download link
@@ -276,7 +376,7 @@ export default function ProfessorAnalytics() {
               <div className="bg-white rounded-lg shadow p-6">
                 <p className="text-sm text-gray-600">Avg Duration</p>
                 <p className="text-3xl font-bold text-orange-600 mt-2">
-                  {formatDuration(stats.avgDuration * 60)}
+                  {formatDuration(stats.avgDuration)}
                 </p>
                 <p className="text-xs text-gray-500 mt-2">Per session</p>
               </div>
@@ -325,7 +425,11 @@ export default function ProfessorAnalytics() {
                         return (
                           <tr
                             key={session.id || session.sessionId || `session-${idx}`}
-                            className="border-b border-gray-200 hover:bg-gray-50"
+                            className="border-b border-gray-200 hover:bg-blue-50 cursor-pointer transition"
+                            onClick={() => {
+                              setSelectedSession(session);
+                              setSessionDetailsOpen(true);
+                            }}
                           >
                             <td className="px-6 py-4 text-sm text-gray-900">
                               {session.scheduledStartTime
@@ -335,7 +439,7 @@ export default function ProfessorAnalytics() {
                                 : 'N/A'}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900">
-                              {formatDuration(session.avgDuration * 60 || 0)}
+                              {formatDuration(session.avgDuration ? session.avgDuration : 0)}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900 font-medium">
                               {session.attendanceCount || 0} / {stats.totalStudents}
@@ -368,38 +472,42 @@ export default function ProfessorAnalytics() {
               
               {/* Top Row - Main Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <AttendanceTrendChart />
-                <AttendanceDonutChart />
+                <AttendanceTrendChart data={chartData.trendData} />
+                <AttendanceDonutChart data={chartData.donutData} />
               </div>
 
               {/* Middle Row */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <StudentBreakdownChart />
-                <DurationDistributionChart />
+                <StudentBreakdownChart data={chartData.studentBreakdownData} sessions={sessions} />
+                <DurationDistributionChart data={chartData.durationData} />
               </div>
 
               {/* Bottom Row */}
               <div className="grid grid-cols-1 gap-6">
-                <PresenceTimeline />
+                <PresenceTimeline data={chartData.presenceTimelineData} />
               </div>
 
               {/* Export Options */}
               <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
                 <h4 className="text-lg font-semibold text-blue-900 mb-3">📊 Export Options</h4>
-                <p className="text-blue-800 mb-4">Export detailed attendance reports in various formats:</p>
+                <p className="text-blue-800 mb-4">Export detailed attendance reports:</p>
                 <div className="flex flex-wrap gap-3">
-                  <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">
+                  <button 
+                    onClick={handleExportCSV}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+                  >
                     📥 CSV Report
-                  </button>
-                  <button className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
-                    📄 PDF Report
-                  </button>
-                  <button className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium">
-                    📋 Excel Sheet
                   </button>
                 </div>
               </div>
             </div>
+
+            {/* Session Details Modal */}
+            <SessionDetailsModal 
+              session={selectedSession}
+              isOpen={sessionDetailsOpen}
+              onClose={() => setSessionDetailsOpen(false)}
+            />
           </>
         )}
       </div>

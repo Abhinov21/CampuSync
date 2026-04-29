@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../hooks/useAuth';
-import { useCurrentSession } from '../../hooks/useAttendance';
+import { useCurrentSession, useHistoryList } from '../../hooks/useAttendance';
 import SessionCard from '../../components/SessionCard';
 import api from '../../utils/api';
 
@@ -16,6 +16,7 @@ import api from '../../utils/api';
 export default function StudentDashboard() {
   const { user, logout } = useAuth();
   const { session, loading: sessionLoading, error: sessionError, refetch: refetchSession } = useCurrentSession();
+  const { records, loading: historyLoading } = useHistoryList(1);
   
   const [stats, setStats] = useState({
     presentCount: 0,
@@ -27,35 +28,48 @@ export default function StudentDashboard() {
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [coursesError, setCoursesError] = useState(null);
-  
-  // Track which sessions we've already joined to avoid duplicate toasts
-  const joinedSessions = useRef(new Set());
 
-  // Fetch statistics from attendance history
+  // Calculate statistics from attendance history
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        // For Day 2, show placeholder stats since no actual attendance data exists
-        // This will be populated once professors start attendance sessions
-        setStats({
-          presentCount: 0,
-          totalSessions: 0,
-          attendancePercentage: 0,
-          currentStreak: 0,
-        });
-      } catch (error) {
-        console.error('Failed to fetch stats:', error);
-        setStats({
-          presentCount: 0,
-          totalSessions: 0,
-          attendancePercentage: 0,
-          currentStreak: 0,
-        });
-      }
-    };
+    if (!records || records.length === 0) {
+      setStats({
+        presentCount: 0,
+        totalSessions: 0,
+        attendancePercentage: 0,
+        currentStreak: 0,
+      });
+      return;
+    }
 
-    fetchStats();
-  }, []);
+    // Sort by date descending (most recent first)
+    const sorted = [...records].sort((a, b) => 
+      new Date(b.sessionStartTime) - new Date(a.sessionStartTime)
+    );
+
+    // Count sessions based on attendance status (65% threshold applied by backend)
+    const presentCount = sorted.filter(r => r.attended === true || r.status === 'PRESENT').length;
+    const totalSessions = sorted.length;
+    const attendancePercentage = totalSessions > 0 
+      ? Math.round((presentCount / totalSessions) * 100) 
+      : 0;
+
+    // Calculate current streak (consecutive recent sessions with attendance)
+    let currentStreak = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i].attended === true || sorted[i].status === 'PRESENT') {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+
+    setStats({
+      presentCount,
+      totalSessions,
+      attendancePercentage,
+      currentStreak,
+    });
+  }, [records]);
 
   // Fetch enrolled courses
   useEffect(() => {
@@ -79,23 +93,19 @@ export default function StudentDashboard() {
 
   // Auto-join active sessions in enrolled courses
   useEffect(() => {
-    if (courses && courses.length > 0) {
-      const autoJoinSessions = async () => {
+    if (!courses || courses.length === 0) return;
+
+    const autoJoinSessions = async () => {
+      try {
         for (const course of courses) {
           try {
-            console.log('🔍 Checking for active session in course:', course.name);
             const response = await api.post('/api/attendance/join-session', {
               courseId: course.id,
             });
             if (response.data?.status === 'success') {
-              // Only show toast if we haven't already joined this session
-              if (!joinedSessions.current.has(course.id)) {
-                // Check if it's a new join (not "already joined")
-                if (!response.data?.message?.includes('Already')) {
-                  console.log('✅ Joined active session:', course.name);
-                  toast.success(`Joined session for ${course.name}`);
-                  joinedSessions.current.add(course.id);
-                }
+              // Only show toast for NEW joins (not "Already joined")
+              if (!response.data?.message?.includes('Already')) {
+                toast.success(`Joined session for ${course.name}`);
               }
               // Trigger refresh of current session
               if (refetchSession) {
@@ -103,32 +113,28 @@ export default function StudentDashboard() {
               }
             }
           } catch (error) {
-            // No active session - remove from joined set
-            // This allows showing the message again if session restarts
-            if (error.response?.status === 404) {
-              joinedSessions.current.delete(course.id);
-              console.log(`ℹ️ No active session for ${course.name}`);
-            } else {
-              console.log(`ℹ️ Error joining session for ${course.name}:`, error.message);
+            if (error.response?.status !== 404) {
+              // Only log non-404 errors (404 means no active session)
+              console.log(`Error joining session for ${course.name}:`, error.message);
             }
           }
         }
-      };
+      } catch (error) {
+        console.error('Error in autoJoinSessions:', error);
+      }
+    };
 
+    autoJoinSessions();
+    
+    // Retry every 10 seconds to catch new sessions
+    // IMPORTANT: Always retry - don't cache "joined" status
+    // This ensures we can rejoin if a new session starts for the same course
+    const retryInterval = setInterval(() => {
       autoJoinSessions();
-      
-      // Only retry every 10 seconds if there's no active session
-      // This prevents continuous retries when already joined
-      const retryInterval = setInterval(() => {
-        // Only retry if we don't have an active session
-        if (!session) {
-          autoJoinSessions();
-        }
-      }, 10000);
-      
-      return () => clearInterval(retryInterval);
-    }
-  }, [courses, refetchSession, session]);
+    }, 10000);
+    
+    return () => clearInterval(retryInterval);
+  }, [courses, refetchSession]);
 
   const handleLogout = () => {
     logout();

@@ -64,14 +64,14 @@ export const useAttendance = () => {
 
 /**
  * Hook for loading current session with loading/error states
- * Auto-refreshes more frequently when session is active to detect end quickly
+ * Auto-refreshes every 10 seconds to stay synchronized
  */
 export const useCurrentSession = () => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [sessionEnded, setSessionEnded] = useState(false);
   const socketRef = useRef(null);
+  const lastSessionRef = useRef(null);
 
   const fetchSession = useCallback(async () => {
     try {
@@ -79,19 +79,17 @@ export const useCurrentSession = () => {
       const response = await api.get('/api/attendance/current');
       const newSession = response.data.data?.currentSession || null;
       
-      // Log session state changes for debugging
-      if (session && !newSession) {
+      // Detect session state changes using ref
+      if (lastSessionRef.current && !newSession) {
+        // Session just ended
         console.log('🔴 Session ended detected by client');
-        // Show notification that session has ended
-        if (!sessionEnded) {
-          toast.error('Session has ended. Thank you for attending!');
-          setSessionEnded(true);
-        }
-      } else if (!session && newSession) {
+        toast.error('Session has ended. Thank you for attending!');
+      } else if (!lastSessionRef.current && newSession) {
+        // New session started
         console.log('🟢 New session started:', newSession.courseName);
-        setSessionEnded(false);
       }
       
+      lastSessionRef.current = newSession;
       setSession(newSession);
       setLoading(false);
     } catch (err) {
@@ -99,19 +97,17 @@ export const useCurrentSession = () => {
       setSession(null);
       setLoading(false);
     }
-  }, [session, sessionEnded]);
+  }, []);
 
   useEffect(() => {
     // Initial fetch
     fetchSession();
     
-    // Refresh intervals:
-    // - Every 5 seconds when session is ACTIVE (detect end quickly)
-    // - Every 30 seconds when no session (check for new session start)
-    const interval = setInterval(fetchSession, session ? 5000 : 30000);
+    // Fixed interval: Always poll every 10 seconds (stable, no flickering)
+    const interval = setInterval(fetchSession, 10000);
     
     return () => clearInterval(interval);
-  }, [fetchSession, session]);
+  }, [fetchSession]);
 
   // Listen for real-time session-ended events via WebSocket
   useEffect(() => {
@@ -258,10 +254,13 @@ export const useStats = (records = []) => {
     }
 
     // Sort by date descending (most recent first)
-    const sorted = [...records].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const sorted = [...records].sort((a, b) => 
+      new Date(b.sessionStartTime) - new Date(a.sessionStartTime)
+    );
 
+    // Count sessions based on attendance status (65% threshold applied by backend)
     const presentCount = sorted.filter(r => r.attended === true || r.status === 'PRESENT').length;
-    const absentCount = sorted.filter(r => r.attended === false || r.status === 'ABSENT').length;
+    const absentCount = sorted.length - presentCount;
     const totalSessions = sorted.length;
     const attendancePercentage = totalSessions > 0 ? Math.round((presentCount / totalSessions) * 100) : 0;
 
