@@ -15,9 +15,14 @@ export default function ProfessorLiveAttendance() {
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
   const [sessionStatus, setSessionStatus] = useState('LOADING'); // LOADING, ACTIVE, ENDED
+  const [showManualMarking, setShowManualMarking] = useState(false);
+  const [enrolledStudents, setEnrolledStudents] = useState([]);
+  const [markingInProgress, setMarkingInProgress] = useState(false);
+  const [sessionDuration, setSessionDuration] = useState(0);
   const isInitialLoadRef = useRef(true);
   const hasShownErrorRef = useRef(false);
   const isLoggingOutRef = useRef(false);
+  const sessionStartTimeRef = useRef(null);
 
   // Handle logout with proper cleanup
   const handleLogout = () => {
@@ -77,6 +82,64 @@ export default function ProfessorLiveAttendance() {
   // Track if we've already joined the session
   const joinedSessionIdRef = useRef(null);
 
+  // Fetch enrolled students for manual marking
+  useEffect(() => {
+    if (!currentSession?.id) return;
+
+    const fetchEnrolledStudents = async () => {
+      try {
+        const response = await api.get(`/api/sessions/${currentSession.id}/enrolled-students`);
+        if (response.data?.data?.students) {
+          setEnrolledStudents(response.data.data.students);
+        }
+      } catch (err) {
+        console.error('Failed to fetch enrolled students:', err);
+      }
+    };
+
+    fetchEnrolledStudents();
+    // Refresh every 10 seconds to get updates
+    const interval = setInterval(fetchEnrolledStudents, 10000);
+    return () => clearInterval(interval);
+  }, [currentSession?.id]);
+
+  // Handle manual attendance marking
+  const handleMarkAttendance = async (studentId, isPresent) => {
+    if (markingInProgress) return;
+    
+    setMarkingInProgress(true);
+    try {
+      const response = await api.post(`/api/sessions/${currentSession.id}/mark-attendance`, {
+        studentId,
+        isPresent,
+      });
+
+      if (response.status === 200) {
+        toast.success(`Student marked as ${isPresent ? 'present' : 'absent'}`);
+        
+        // Update enrolled students list
+        setEnrolledStudents(prev =>
+          prev.map(s =>
+            s.studentId === studentId
+              ? { ...s, isPresent }
+              : s
+          )
+        );
+
+        // Also refresh the live attendance list
+        const currentResponse = await api.get('/api/sessions/active');
+        if (currentResponse.data?.data) {
+          setCurrentSession(currentResponse.data.data);
+        }
+      }
+    } catch (err) {
+      console.error('Error marking attendance:', err);
+      toast.error(`Failed to mark attendance: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setMarkingInProgress(false);
+    }
+  };
+
   // Fetch active session and join room
   useEffect(() => {
     if (!socket || !user) return;
@@ -98,6 +161,10 @@ export default function ProfessorLiveAttendance() {
           setSessionStatus('ACTIVE');
           setError(null); // Clear any previous errors on success
           hasShownErrorRef.current = false;
+          // Store session start time for duration calculation
+          if (!sessionStartTimeRef.current) {
+            sessionStartTimeRef.current = new Date(session.sessionStartTime);
+          }
 
           // Join WebSocket room for this session - ONLY if we haven't joined yet
           if (socket && socket.connected && joinedSessionIdRef.current !== session.id) {
@@ -143,6 +210,19 @@ export default function ProfessorLiveAttendance() {
       joinedSessionIdRef.current = null;
     };
   }, [socket, user]);
+
+  // Update session duration timer every second
+  useEffect(() => {
+    if (sessionStatus !== 'ACTIVE' || !sessionStartTimeRef.current) return;
+
+    const timer = setInterval(() => {
+      const now = new Date();
+      const elapsed = Math.floor((now - sessionStartTimeRef.current) / 1000);
+      setSessionDuration(elapsed);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [sessionStatus]);
 
   // Listen for WebSocket events
   useEffect(() => {
@@ -310,17 +390,29 @@ export default function ProfessorLiveAttendance() {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Active Session</h3>
               </div>
-              <button
-                onClick={handleEndSession}
-                disabled={sessionStatus !== 'ACTIVE'}
-                className={`px-4 py-2 rounded font-medium text-white transition ${
-                  sessionStatus === 'ACTIVE'
-                    ? 'bg-red-600 hover:bg-red-700 cursor-pointer'
-                    : 'bg-gray-400 cursor-not-allowed'
-                }`}
-              >
-                🛑 End Session
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowManualMarking(!showManualMarking)}
+                  className={`px-4 py-2 rounded font-medium transition ${
+                    showManualMarking
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                  }`}
+                >
+                  {showManualMarking ? '📋 Hide Manual Marking' : '📋 Manual Marking'}
+                </button>
+                <button
+                  onClick={handleEndSession}
+                  disabled={sessionStatus !== 'ACTIVE'}
+                  className={`px-4 py-2 rounded font-medium text-white transition ${
+                    sessionStatus === 'ACTIVE'
+                      ? 'bg-red-600 hover:bg-red-700 cursor-pointer'
+                      : 'bg-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  🛑 End Session
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
@@ -332,7 +424,13 @@ export default function ProfessorLiveAttendance() {
               <div>
                 <p className="text-sm text-gray-600">Start Time</p>
                 <p className="text-lg font-semibold text-gray-900">
-                  {new Date(currentSession.scheduledStartTime).toLocaleTimeString()}
+                  {new Date(currentSession.sessionStartTime).toLocaleTimeString()}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Duration</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {Math.floor(sessionDuration / 3600)}h {Math.floor((sessionDuration % 3600) / 60)}m {sessionDuration % 60}s
                 </p>
               </div>
               <div>
@@ -399,7 +497,7 @@ export default function ProfessorLiveAttendance() {
           </div>
         )}
 
-        {!loading && students.length > 0 && (
+        {!loading && students.length > 0 && !showManualMarking && (
           <div>
             <div className="mb-6">
               <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -413,6 +511,73 @@ export default function ProfessorLiveAttendance() {
               {students.map((student) => (
                 <StudentAttendanceCard key={student.id || student.attendanceSessionId} student={student} />
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Manual Attendance Marking Section */}
+        {showManualMarking && enrolledStudents.length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Manual Attendance Marking</h3>
+            <p className="text-gray-600 text-sm mb-6">
+              Click on each student to mark them as present or absent. Changes will be reflected immediately.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {enrolledStudents.map((student) => (
+                <div
+                  key={student.studentId}
+                  className={`p-4 rounded-lg border-2 transition ${
+                    student.isPresent
+                      ? 'border-green-500 bg-green-50'
+                      : 'border-red-500 bg-red-50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900">{student.fullName}</p>
+                      <p className="text-sm text-gray-600">{student.rollNumber}</p>
+                      <p className="text-xs text-gray-500">{student.email}</p>
+                      {student.duration > 0 && (
+                        <p className="text-xs text-gray-600 mt-1">
+                          Duration: {Math.floor(student.duration / 60)} min
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleMarkAttendance(student.studentId, true)}
+                        disabled={markingInProgress}
+                        className={`px-3 py-2 rounded text-sm font-medium transition ${
+                          student.isPresent
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                        } ${markingInProgress ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        ✓ Present
+                      </button>
+                      <button
+                        onClick={() => handleMarkAttendance(student.studentId, false)}
+                        disabled={markingInProgress}
+                        className={`px-3 py-2 rounded text-sm font-medium transition ${
+                          !student.isPresent
+                            ? 'bg-red-600 text-white hover:bg-red-700'
+                            : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                        } ${markingInProgress ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        ✗ Absent
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-sm text-blue-800">
+                <strong>Summary:</strong> {enrolledStudents.filter(s => s.isPresent).length} of{' '}
+                {enrolledStudents.length} students marked as present
+              </p>
             </div>
           </div>
         )}

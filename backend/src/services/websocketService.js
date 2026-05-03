@@ -8,9 +8,17 @@ const { verifyToken } = require('../utils/auth');
 
 class WebSocketService {
   constructor(httpServer) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:3000',
+      frontendUrl
+    ];
+
     this.io = new Server(httpServer, {
       cors: {
-        origin: process.env.FRONTEND_URL || '*',
+        origin: allowedOrigins,
         credentials: true
       }
     });

@@ -599,6 +599,72 @@ router.get('/active', authenticateToken, authorizeRole(['PROFESSOR']), async (re
 });
 
 /**
+ * GET /api/sessions/all-active
+ * Get all currently active sessions across professor's courses (NEW ENDPOINT)
+ */
+router.get('/all-active', authenticateToken, authorizeRole(['PROFESSOR']), async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get professor
+    const professor = await prisma.professor.findUnique({
+      where: { userId },
+      include: { courses: true },
+    });
+
+    if (!professor) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Professor profile not found',
+        error: 'PROFESSOR_NOT_FOUND',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Find all active sessions for this professor's courses
+    const activeSessions = await prisma.session.findMany({
+      where: {
+        courseId: { in: professor.courses.map(c => c.id) },
+        sessionStatus: 'ACTIVE',
+      },
+      include: {
+        course: true,
+        attendanceSessions: true,
+      },
+    });
+
+    // Format response
+    const sessions = activeSessions.map(session => ({
+      id: session.id,
+      courseId: session.courseId,
+      courseName: session.course.name,
+      sessionStartTime: session.scheduledStartTime.toISOString(),
+      sessionStatus: session.sessionStatus,
+      presentCount: session.attendanceSessions.filter(a => a.sessionStatus === 'ACTIVE').length,
+      totalEnrolled: session.attendanceSessions.length,
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Active sessions retrieved',
+      data: {
+        sessions,
+        totalActive: sessions.length,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error in GET /sessions/all-active:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch active sessions',
+      error: 'INTERNAL_ERROR',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/**
  * GET /api/sessions/history
  * Get all sessions (active and completed) for professor's courses
  */
@@ -840,5 +906,319 @@ router.get('/debug/cleanup-confirm', authenticateToken, async (req, res) => {
     });
   }
 });
+
+/**
+ * GET /api/sessions/:sessionId/enrolled-students
+ * Get all enrolled students for a session (Professor only)
+ * Used to show full list for manual attendance marking
+ */
+router.get(
+  '/:sessionId/enrolled-students',
+  authenticateToken,
+  authorizeRole(['PROFESSOR']),
+  async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const userId = req.user.userId;
+
+      // Get professor
+      const professor = await prisma.professor.findUnique({
+        where: { userId },
+      });
+
+      if (!professor) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Professor profile not found',
+          error: 'PROFESSOR_NOT_FOUND',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Get session
+      const session = await prisma.session.findFirst({
+        where: {
+          id: sessionId,
+          course: { professorId: professor.id },
+        },
+        include: { course: true },
+      });
+
+      if (!session) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Session not found or access denied',
+          error: 'NOT_FOUND',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Get all enrolled students
+      const enrolledStudents = await prisma.enrollment.findMany({
+        where: { courseId: session.courseId },
+        include: { student: { include: { user: true } } },
+      });
+
+      // Get students with attendance records for this session
+      const attendanceSessions = await prisma.attendanceSession.findMany({
+        where: { sessionId },
+      });
+
+      const attendanceMap = new Map();
+      attendanceSessions.forEach(att => {
+        attendanceMap.set(att.studentId, att);
+      });
+
+      // Build student list with current attendance status
+      const students = enrolledStudents.map(enrollment => {
+        const student = enrollment.student;
+        const attendance = attendanceMap.get(student.id);
+
+        return {
+          studentId: student.id,
+          name: student.user.email.split('@')[0],
+          fullName: student.name,
+          rollNumber: student.rollNumber,
+          email: student.user.email,
+          isPresent: attendance ? true : false,
+          attendanceSessionId: attendance ? attendance.id : null,
+          duration: attendance ? attendance.totalDurationSeconds : 0,
+        };
+      });
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Enrolled students fetched',
+        data: {
+          sessionId,
+          students,
+          total: students.length,
+          presentCount: students.filter(s => s.isPresent).length,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error in GET /sessions/:sessionId/enrolled-students:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to fetch enrolled students',
+        error: 'INTERNAL_ERROR',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/sessions/:sessionId/mark-attendance
+ * Manually mark a student as present or absent (Professor only)
+ * Creates or updates an AttendanceSession record for manual marking
+ */
+router.post(
+  '/:sessionId/mark-attendance',
+  authenticateToken,
+  authorizeRole(['PROFESSOR']),
+  async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const { studentId, isPresent } = req.body;
+      const userId = req.user.userId;
+
+      if (!studentId || isPresent === undefined) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'studentId and isPresent are required',
+          error: 'MISSING_FIELDS',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Get professor
+      const professor = await prisma.professor.findUnique({
+        where: { userId },
+      });
+
+      if (!professor) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Professor profile not found',
+          error: 'PROFESSOR_NOT_FOUND',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Get session and verify professor owns it
+      const session = await prisma.session.findFirst({
+        where: {
+          id: sessionId,
+          course: { professorId: professor.id },
+        },
+        include: { course: true },
+      });
+
+      if (!session) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Session not found or access denied',
+          error: 'NOT_FOUND',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Verify student is enrolled in course
+      const enrollment = await prisma.enrollment.findFirst({
+        where: {
+          studentId,
+          courseId: session.courseId,
+        },
+        include: { student: { include: { user: true } } },
+      });
+
+      if (!enrollment) {
+        return res.status(403).json({
+          status: 'error',
+          message: 'Student not enrolled in this course',
+          error: 'NOT_ENROLLED',
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      const student = enrollment.student;
+
+      if (isPresent) {
+        // Mark as PRESENT - create or update AttendanceSession
+        const now = new Date();
+
+        // Check if attendance session already exists
+        let attendanceSession = await prisma.attendanceSession.findFirst({
+          where: {
+            sessionId,
+            studentId,
+          },
+        });
+
+        if (attendanceSession) {
+          // Update existing record
+          attendanceSession = await prisma.attendanceSession.update({
+            where: { id: attendanceSession.id },
+            data: {
+              sessionStatus: 'ENDED',
+              lastPingTime: now,
+              // Calculate duration from session start time
+              totalDurationSeconds:
+                session.scheduledEndTime && attendanceSession.sessionStartTime
+                  ? Math.floor(
+                      (new Date(session.scheduledEndTime) -
+                        new Date(attendanceSession.sessionStartTime)) /
+                        1000
+                    )
+                  : 3600, // Default 1 hour if can't calculate
+            },
+          });
+        } else {
+          // For manual marking, try to get student's device if available
+          let deviceId = null;
+          const studentDevice = await prisma.device.findUnique({
+            where: { studentId },
+          });
+
+          if (studentDevice) {
+            deviceId = studentDevice.id;
+          } else {
+            // If no device, we need to create a placeholder device for this student
+            // This allows manual marking in development/testing scenarios
+            const placeholderDevice = await prisma.device.create({
+              data: {
+                deviceId: `MANUAL_${studentId.substring(0, 8)}`,
+                studentId,
+                deviceStatus: 'INACTIVE',
+                batteryLevel: 100,
+              },
+            });
+            deviceId = placeholderDevice.id;
+          }
+
+          // Create new record for manual attendance
+          const defaultDuration = 3600; // Default 1 hour for manual marking
+
+          attendanceSession = await prisma.attendanceSession.create({
+            data: {
+              sessionId,
+              studentId,
+              deviceId, // Use student's device or newly created placeholder
+              sessionStartTime: session.scheduledStartTime,
+              sessionEndTime: now,
+              totalDurationSeconds: defaultDuration,
+              sessionStatus: 'ENDED',
+              lastPingTime: now,
+            },
+          });
+
+          // Also create an AttendanceRecord for tracking
+          await prisma.attendanceRecord.create({
+            data: {
+              attendanceSessionId: attendanceSession.id,
+              studentId,
+              eventType: 'AUTH',
+              eventTimestamp: now,
+            },
+          });
+        }
+
+        res.status(200).json({
+          status: 'success',
+          message: 'Student marked as present',
+          data: {
+            studentId,
+            studentName: student.name,
+            status: 'present',
+            attendanceSessionId: attendanceSession.id,
+          },
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        // Mark as ABSENT - delete AttendanceSession if exists
+        const existingAttendance = await prisma.attendanceSession.findFirst({
+          where: {
+            sessionId,
+            studentId,
+          },
+        });
+
+        if (existingAttendance) {
+          // Delete related records first
+          await prisma.attendanceRecord.deleteMany({
+            where: { attendanceSessionId: existingAttendance.id },
+          });
+
+          // Delete attendance session
+          await prisma.attendanceSession.delete({
+            where: { id: existingAttendance.id },
+          });
+        }
+
+        res.status(200).json({
+          status: 'success',
+          message: 'Student marked as absent',
+          data: {
+            studentId,
+            studentName: student.name,
+            status: 'absent',
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      console.error('Error in POST /sessions/:sessionId/mark-attendance:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to mark attendance',
+        error: 'INTERNAL_ERROR',
+        details: error.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+);
 
 module.exports = router;
