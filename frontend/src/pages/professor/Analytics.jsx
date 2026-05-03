@@ -65,10 +65,23 @@ export default function ProfessorAnalytics() {
       
       if (reportResponse.data?.data) {
         const data = reportResponse.data.data;
-        const sessionData = Array.isArray(data.sessions) 
-          ? data.sessions 
+        // Normalize sessions array and ensure duration field exists
+        const sessionData = Array.isArray(data.sessions)
+          ? data.sessions
           : (data.sessions ? [data.sessions] : []);
-        setSessions(sessionData);
+
+        // Debug: log backend report to inspect fields
+        // eslint-disable-next-line no-console
+        console.debug('Attendance report response:', data);
+
+        // Ensure each session has a sessionDurationSeconds field (fallback to avgDuration)
+        const normalizedSessions = sessionData.map(s => ({
+          ...s,
+          sessionDurationSeconds: s.sessionDurationSeconds ?? s.avgDuration ?? 0,
+          totalEnrolled: s.totalEnrolled ?? data.totalStudents ?? 0,
+        }));
+
+        setSessions(normalizedSessions);
         
         // Calculate statistics - CORRECTED
         const totalSessions = data.totalSessions || 0;
@@ -439,10 +452,10 @@ export default function ProfessorAnalytics() {
                                 : 'N/A'}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900">
-                              {formatDuration(session.avgDuration ? session.avgDuration : 0)}
+                              {formatDuration(session.sessionDurationSeconds ? session.sessionDurationSeconds : 0)}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900 font-medium">
-                              {session.attendanceCount || 0} / {stats.totalStudents}
+                              {session.attendanceCount || 0} / {session.totalEnrolled || stats.totalStudents}
                             </td>
                             <td className="px-6 py-4 text-sm">
                               <span
